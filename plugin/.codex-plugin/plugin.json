@@ -1,0 +1,11 @@
+{
+  "name": "chatgpt-mcp-bridge",
+  "version": "0.1.0",
+  "description": "Remote development through MCP.",
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "ChatGPT MCP Bridge",
+    "shortDescription": "Work with remote projects through MCP."
+  }
+}
