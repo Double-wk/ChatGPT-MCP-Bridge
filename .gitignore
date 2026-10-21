@@ -1,0 +1,35 @@
+# Secrets, local configuration and infrastructure credentials
+.env
+.env.*
+!.env.example
+config/servers.toml
+config/servers.toml.bak*
+*.pem
+*.key
+*.p12
+*.pfx
+*.secret
+credentials/
+secrets/
+gateway-token
+http-token
+
+# Runtime output
+gateway/*.log
+cloudflared/*.log
+cloudflared/logs/
+logs/
+*.pid
+
+# Local installs & Python outputs
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.coverage
+.idea/
+.vscode/
+.DS_Store

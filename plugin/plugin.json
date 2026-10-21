@@ -1,0 +1,37 @@
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
+  "name": "chatgpt-mcp-bridge",
+  "version": "0.1.0",
+  "description": "Authenticated SSH and GPU operations through ChatGPT via MCP.",
+  "author": {
+    "name": "Double-wk"
+  },
+  "repository": "https://github.com/Double-wk/ChatGPT-MCP-Bridge",
+  "license": "MPL-2.0",
+  "keywords": [
+    "ssh",
+    "mcp",
+    "gpu",
+    "remote-server",
+    "devops"
+  ],
+  "extensions": {
+    "com.openai": {
+      "interface": {
+        "displayName": "ChatGPT MCP Bridge",
+        "shortDescription": "Authenticated remote SSH tools in ChatGPT.",
+        "longDescription": "Connect an authenticated MCP endpoint to run SSH-backed remote commands, inspect files, edit projects and execute tests.",
+        "developerName": "Double-wk",
+        "category": "Developer Tools",
+        "capabilities": [
+          "Read",
+          "Write"
+        ],
+        "defaultPrompt": [
+          "List the configured SSH servers.",
+          "Check GPU availability on my configured server."
+        ]
+      }
+    }
+  }
+}

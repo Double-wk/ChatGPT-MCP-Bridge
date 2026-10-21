@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "remote_ssh": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "blc-ssh-mcp"
+      ]
+    }
+  }
+}
