@@ -6,21 +6,21 @@
 
 **当 Codex 额度暂时用尽，你仍然可以在 ChatGPT 网页版里完成一部分常见开发操作。**
 
-如果你平时使用 Codex 查看项目、修改代码、运行命令、执行测试或管理远程服务器，可以尝试用 **ChatGPT 网页版 + MCP** 完成其中的一部分：
+如果你平时使用 Codex 查看项目、修改代码、运行命令、执行测试，或操作**自己的电脑与远程服务器**，可以尝试用 **ChatGPT 网页版 + MCP** 完成其中的一部分：
 
 - **查看与修改代码**：读取文件、理解项目、调整实现
 - **运行命令与测试**：执行脚本、排查问题、检查测试结果
 - **管理开发任务**：查看日志与进程、检查 Git 状态、追踪实验
-- **操作授权服务器**：直接在聊天中执行常见远程操作
+- **连接本地或远程环境**：在聊天中操作通过 SSH 授权的电脑或服务器
 
-ChatGPT 负责理解需求与调用工具，MCP 负责将工具能力接入对话。本项目当前通过 **SSH / SFTP** 连接已授权的 Linux 主机；这些是底层实现，不需要用户在 ChatGPT 对话中手动输入 SSH 命令。
+ChatGPT 负责理解需求与调用工具，MCP 负责将工具能力接入对话。本项目通过 **SSH / SFTP** 连接已授权的目标主机：目标既可以是**本地电脑（通过 localhost SSH）**，也可以是**远程服务器**。本地电脑同样需要 SSH 服务和授权配置；目前已实际验证的是 Linux 服务器部署，本机 macOS / Windows 等场景尚需单独测试。
 
 **这是 Codex 之外的一种工作方式，不会增加或恢复 Codex 额度，也无法完整替代 Codex 的全部能力。** 可用功能受当前 ChatGPT 工具权限、使用限制以及服务器配置影响。
 
 
 ---
 
-这是一个面向 ChatGPT 网页版的 **远程开发 MCP 接入项目**：包含 MCP 远程工具、GitHub OAuth 网关、Cloudflare HTTPS Tunnel、插件配置及必要测试。SSH / SFTP 仅用于底层远程执行与文件传输。核心实现基于 [blackaxgit/ssh-mcp](https://github.com/blackaxgit/ssh-mcp)，许可证见 [LICENSE](LICENSE)。GitHub 更新不会自动部署到正在运行的服务器。
+这是一个面向 ChatGPT 的 **本地与远程开发环境接入项目**：包含 SSH/SFTP MCP 工具、GitHub OAuth 网关、Cloudflare HTTPS Tunnel、插件配置及必要测试。既可以把 MCP 服务部署在服务器上，也可以部署在自己的电脑上（需满足平台依赖和公网入口条件）。SSH / SFTP 用于底层执行与文件传输。核心实现基于 [blackaxgit/ssh-mcp](https://github.com/blackaxgit/ssh-mcp)，许可证见 [LICENSE](LICENSE)。GitHub 更新不会自动部署到正在运行的服务器。
 
 ## 在 ChatGPT 中使用
 
@@ -47,11 +47,11 @@ flowchart LR
     end
 
     CF["Cloudflare Tunnel<br/>公网 HTTPS 入口"]
-    subgraph SERVER["Linux / GPU 服务器"]
+    subgraph HOST["MCP 部署环境：本机 / 远程服务器"]
         direction LR
         GW["8200 · OAuth 网关<br/>授权与请求转发"]
         MCP["8000 · MCP 服务<br/>6 个远程工具"]
-        SSH["gpu-local · 目标主机<br/>命令执行与文件传输"]
+        SSH["目标：localhost / 远程主机<br/>命令执行与文件传输"]
         GW -->|"Bearer 认证"| MCP
         MCP -->|"SSH / SFTP"| SSH
     end
@@ -65,7 +65,7 @@ flowchart LR
     classDef oauth fill:#F0F5FA,stroke:#A6BCCD,color:#274A63,stroke-width:1px;
     class CHAT,CF,GW,MCP,SSH main;
     class GH oauth;
-    style SERVER fill:#F8FAFC,stroke:#CDD7E1,stroke-width:1px
+    style HOST fill:#F8FAFC,stroke:#CDD7E1,stroke-width:1px
     style EXTERNAL fill:transparent,stroke:transparent
 ```
 
@@ -78,9 +78,9 @@ flowchart LR
 | **GitHub OAuth** | 确认允许登录的 GitHub 用户身份；不负责运行 SSH 命令 |
 | **8200 OAuth 网关** | 处理授权码与 Token、校验访问权限，把 MCP 请求转给内部服务 |
 | **8000 SSH MCP** | 提供 `execute`、文件传输、服务器列表等 6 个工具 |
-| **gpu-local** | 通过 SSH 执行命令或使用 SFTP 传输文件的目标主机 |
+| **目标主机** | 本机 SSH（如 `my-computer`）或远程 SSH（如 `gpu-local`），负责命令执行和文件传输 |
 
-调用顺序可以记作：**ChatGPT → Cloudflare → 8200 网关 → 8000 MCP → SSH 主机**。首次连接或令牌失效时，才需要额外进行 GitHub OAuth 授权。
+调用顺序可以记作：**ChatGPT 网页版 → HTTPS Tunnel → 8200 网关 → 8000 MCP → SSH 目标主机（本机或远程）**。首次连接、刷新凭据到期或撤销后需通过 GitHub OAuth 授权。若使用支持本地 stdio 的 MCP 客户端，则不需要网页版使用的公网 HTTP/OAuth 链路。
 
 **注意端口不是新旧版本的关系**：8000 是仍在使用的 MCP 核心服务，8200 仅负责 OAuth 认证和代理，二者都需要保留。8202 只是临时测试端口，当前无需启动。启动较早不代表 8000 已废弃；直接停止 8000 会使 MCP 工具不可用。
 
@@ -98,9 +98,88 @@ flowchart LR
 
 实际配置和密钥**不提交 Git**：`~/.config/ssh-mcp/servers.toml`、SSH 私钥、Bearer Token、GitHub OAuth Secret、网关运行日志均位于私有运行环境。
 
+## 部署方式：本地电脑或远程服务器
+
+| 场景 | MCP 安装在哪里 | 连接目标 | 验证情况 |
+| --- | --- | --- | --- |
+| **远程 Linux 服务器** | Linux 服务器 | SSH 访问本机或其他授权主机 | **已验证** |
+| **本地 Linux / macOS** | 你自己的电脑 | SSH 访问 `127.0.0.1`（本机）或远程服务器 | **可行方案，尚未完整实测** |
+| **Windows** | 建议先使用 WSL2/Linux 环境 | WSL 内的 SSH 主机或已配置 OpenSSH 的 Windows 主机 | **需要额外配置，尚未验证** |
+
+**重点区分两种 MCP 连接方式：**
+
+- **ChatGPT 网页版连接**：ChatGPT 运行在云端，无法直接访问你电脑的 `127.0.0.1:8000` 或 `localhost`；即便 MCP 装在本地，仍要通过**可被 ChatGPT 访问的 HTTPS MCP 地址**（例如 HTTPS Tunnel → OAuth 网关）连接，且电脑需要保持在线。不要直接将 SSH 端口、8000 或 8200 裸露在公网。
+- **兼容本地 stdio 的 MCP 客户端**：仓库 `plugin/.mcp.json` 提供 `uvx blc-ssh-mcp` 配置，适用于实际支持启动本地 stdio MCP 进程的客户端；**这不等于 ChatGPT 网页版支持直接运行本地 stdio 插件**。客户端能力应以实际产品为准。
+
+### 在本地电脑安装的思路（Linux / macOS，待完整验证）
+
+下面提供最小可复现的**本地 SSH 目标**配置。需要 Python 3.11+、Git、可用的 SSH 服务端、SSH 客户端及密钥认证；部分系统首次启用 SSH 服务可能需要管理员权限。
+
+1. 在本机 `~/.ssh/config` 中添加 SSH Host（按自己的用户名和密钥路径修改）：
+
+   ```sshconfig
+   Host my-computer
+       HostName 127.0.0.1
+       User your-local-username
+       Port 22
+       IdentityFile ~/.ssh/id_ed25519
+   ```
+
+   先验证：`ssh -o BatchMode=yes my-computer hostname`。这里依赖**本机正在运行的 SSH 服务端**，不是单靠安装 SSH 客户端就能访问本机。
+
+2. 本机安装本仓库及 Python 依赖（使用虚拟环境，避免服务器专用 Conda 路径）：
+
+   ```bash
+   git clone https://github.com/Double-wk/ChatGPT-MCP-Bridge.git
+   cd ChatGPT-MCP-Bridge
+   python3.11 -m venv .venv
+   . .venv/bin/activate
+   python -m pip install -e . uvicorn httpx starlette python-multipart
+   install -d -m 700 "$HOME/.config/ssh-mcp"
+   ```
+
+   编辑 `~/.config/ssh-mcp/servers.toml`（如果已有配置，**只补充新主机，不覆盖原文件**）：
+
+   ```toml
+   [settings]
+   ssh_config_path = "~/.ssh/config"
+   known_hosts = true
+
+   [servers.my-computer]
+   description = "Local workstation through SSH"
+   ```
+
+   文件权限设为 `600`。新装环境需生成**两个不同的私有 Token**（已有的不要覆盖）：
+
+   ```bash
+   umask 077
+   for name in http-token gateway-token; do
+     file="$HOME/.config/ssh-mcp/$name"
+     if [ ! -f "$file" ]; then
+       python -c 'import secrets; print(secrets.token_urlsafe(48))' > "$file"
+     fi
+     chmod 600 "$file"
+   done
+   chmod 600 "$HOME/.config/ssh-mcp/servers.toml"
+   ```
+
+3. 仅测试本地 MCP 后端时，在项目目录执行：
+
+   ```bash
+   export SSH_MCP_PROJECT_DIR="$PWD"
+   export SSH_MCP_CONDA_PREFIX="$PWD/.venv"
+   bash deploy/run-http.sh
+   ```
+
+   这里的 `SSH_MCP_CONDA_PREFIX` 实际指向已创建的 Python 虚拟环境；脚本只使用 `bin/blc-ssh-mcp`，不要求必须安装 Conda。后台部署之前，先确认本机 SSH 可连接、8000 未被占用。
+
+4. 若要由 **ChatGPT 网页版**调用本机，继续按照下方 **GitHub OAuth、私有令牌、8200 网关、HTTPS Tunnel、ChatGPT 连接**的步骤配置。macOS 请另行安装适配本机架构的 `cloudflared`；仓库随附的 `cloudflared/cloudflared` 是 **Linux x86_64 二进制**，不能直接作为 macOS / Windows 客户端使用。启动网关时把 `SSH_MCP_CONDA_PREFIX` 设为本机虚拟环境路径，避免使用下文服务器专用的 `/home/test/Double` 路径。
+
+> **安全建议**：优先在测试机或低权限用户下部署；插件权限选择「始终询问」或至少对写操作要求确认，不建议「允许使用所有工具」。本项目不保证规避任何平台限制、风控或封禁风险。
+
 ## 完整配置流程（五步）
 
-以下步骤把代码下载、GitHub 身份验证、服务器启动和 ChatGPT 连接串起来。代码可以先下载到本地查看，但 8000、8200 和 Cloudflare Tunnel 应运行在提供 MCP 的目标 Linux 服务器上；笔记本不需要启动这些端口。
+下面是**已经验证的 Linux 服务器部署示例**，使用 `/home/test/Double` 和 Conda 路径；若选择在本地电脑安装，则 8000、8200 和 HTTPS Tunnel 也可在**本地电脑**运行，并将 SSH 目标配置为 localhost。请根据上节修改路径、Python 环境和 cloudflared 二进制，**不要直接把服务器专用绝对路径复制到本机**。
 
 ### 1. 下载项目并准备 Conda 环境
 
@@ -180,7 +259,7 @@ export CHATGPT_OAUTH_CLIENT_ID=chatgpt-mcp-bridge
 
 ### 4. 在服务器后台启动服务
 
-先确保内部 MCP 已配置好，再使用 `nohup` 启动。以下命令都在 GPU 服务器执行：
+先确保内部 MCP 已配置好，再使用 `nohup` 启动。以下命令是已验证的 Linux 服务器示例；本地部署应替换项目目录、Python 环境并使用适配本机系统的 Tunnel 客户端：
 
 ```bash
 cd /home/test/Double/ChatGPT-MCP-Bridge
@@ -283,4 +362,4 @@ PY=/mnt/tcm_agent_data/Double/envs/chatgpt-ssh-mcp/bin/python
 
 ## Git 历史管理
 
-本仓库的 `main` 采用**单个根提交**展示当前可部署版本。后续若再次压缩历史，须使用有保护检查的强制推送；这会导致其他克隆中的 `main` 与远程历史分叉，应备份本地修改后重新克隆或明确重置。GitHub 上已不可达的旧提交可能仍存在于缓存或其他克隆中。**更新 GitHub 不会自动更新当前在线进程。**
+`main` 分支保留**完整、连续的 Git 提交历史**。提交 `a37e74e` 是本项目的**第一个稳定版本（Stable V1）**，后续修改一律通过普通 `git commit` 和 `git push` 追加新提交，**不得压缩、删除、重写该稳定版本或强制推送覆盖历史**。如需回退功能，使用保留历史的 `git revert`。**更新 GitHub 不会自动更新当前在线进程。**

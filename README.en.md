@@ -4,13 +4,13 @@
 
 ### Codex quota exhausted? Continue development tasks with ChatGPT + MCP
 
-When Codex usage is temporarily exhausted, **ChatGPT on the web + MCP** can still help with selected development workflows: inspecting and editing code, running commands and tests, reading logs, managing Git, and checking experiments on servers **you are authorized to access**.
+When Codex usage is temporarily exhausted, **ChatGPT on the web + MCP** can still help with selected development workflows: inspecting and editing code, running commands and tests, reading logs, managing Git, and working on **your own computer or remote servers** that you are authorized to access.
 
-Describe the task in ChatGPT instead of repeatedly switching between a terminal and a chat window. ChatGPT handles the conversation and tool calls; the MCP service supplies remote SSH/SFTP capabilities.
+Describe the task in ChatGPT instead of switching between a terminal and a chat window. ChatGPT handles tool calls; this bridge uses SSH/SFTP to reach a permitted target, which can be your **local computer via localhost SSH** or a remote host. Only the Linux server deployment has been verified end to end so far.
 
 **This does not increase, restore, or bypass Codex quota, and cannot fully replace Codex.** Tool availability depends on your ChatGPT access and limits, connector permissions, network, and server configuration.
 
-This project combines an SSH MCP server, GitHub OAuth gateway, Cloudflare HTTPS Tunnel, connector manifests, and tests. The SSH MCP implementation builds on [blackaxgit/ssh-mcp](https://github.com/blackaxgit/ssh-mcp).
+This project connects ChatGPT with **local and remote development environments** through an SSH MCP server, GitHub OAuth gateway, Cloudflare HTTPS Tunnel, connector manifests, and tests. The SSH MCP implementation builds on [blackaxgit/ssh-mcp](https://github.com/blackaxgit/ssh-mcp).
 
 ## Use the plugin in ChatGPT
 
@@ -46,11 +46,11 @@ flowchart LR
     end
 
     CF["Cloudflare Tunnel<br/>public HTTPS"]
-    subgraph SERVER["Linux server"]
+    subgraph HOST["MCP host: local computer or remote server"]
         direction LR
         GW["8200 · OAuth gateway<br/>authentication and proxy"]
         MCP["8000 · MCP service<br/>6 remote tools"]
-        SSH["gpu-local · SSH target<br/>commands and file transfer"]
+        SSH["SSH target: localhost or remote host<br/>commands and file transfer"]
         GW -->|"Bearer auth"| MCP
         MCP -->|"SSH / SFTP"| SSH
     end
@@ -64,11 +64,11 @@ flowchart LR
     classDef oauth fill:#F0F5FA,stroke:#A6BCCD,color:#274A63,stroke-width:1px;
     class CHAT,CF,GW,MCP,SSH main;
     class GH oauth;
-    style SERVER fill:#F8FAFC,stroke:#CDD7E1,stroke-width:1px
+    style HOST fill:#F8FAFC,stroke:#CDD7E1,stroke-width:1px
     style EXTERNAL fill:transparent,stroke:transparent
 ```
 
-**ChatGPT → Cloudflare → 8200 OAuth gateway → 8000 MCP server → SSH/SFTP.**
+**ChatGPT web → HTTPS Tunnel → 8200 OAuth gateway → 8000 MCP server → SSH target (local or remote).**
 
 | Component | Role |
 | --- | --- |
@@ -77,7 +77,7 @@ flowchart LR
 | GitHub OAuth | Authenticate approved users; does not execute SSH |
 | **8200 OAuth gateway** | Issue/verify access tokens and forward `/mcp` requests |
 | **8000 MCP backend** | Implement the six MCP remote tools |
-| `gpu-local` | Example authorized SSH target |
+| SSH target | Authorized local SSH host (e.g. `my-computer`) or remote host (e.g. `gpu-local`) |
 
 **Ports 8000 and 8200 are not competing versions.** Port 8000 is the live upstream backend; stopping it breaks tool calls even when OAuth on 8200 succeeds. Port **8202** is only an optional test gateway and does not need to be running. Both 8000 and 8200 should bind to `127.0.0.1`, not a publicly accessible interface.
 
@@ -96,9 +96,88 @@ flowchart LR
 
 Do **not** commit `~/.config/ssh-mcp/servers.toml`, SSH keys, Bearer tokens, GitHub OAuth secrets, or runtime logs.
 
+## Run it locally or on a remote server
+
+| Scenario | Where MCP runs | SSH target | Verification |
+| --- | --- | --- | --- |
+| **Remote Linux server** | Your Linux server | That server or other authorized hosts | **Tested** |
+| **Local Linux / macOS computer** | Your own computer | `127.0.0.1` via SSH or another server | **Supported by design; not yet end-to-end tested** |
+| **Windows** | Prefer a WSL2/Linux environment | An SSH target in WSL or a configured Windows OpenSSH server | **Extra setup required; not tested** |
+
+**Two distinct client connections:**
+
+- **ChatGPT web:** ChatGPT runs in the cloud and cannot directly connect to your computer's `localhost:8000`. A local deployment still needs a **publicly reachable HTTPS MCP endpoint**, such as an HTTPS Tunnel forwarding to the OAuth gateway on port 8200. Your computer must stay online. Do not expose SSH, port 8000, or port 8200 directly to the public Internet.
+- **Local stdio clients:** `plugin/.mcp.json` defines `uvx blc-ssh-mcp` for compatible local MCP clients. This **does not mean the ChatGPT web interface can launch local stdio processes**. Check your chosen client's actual capabilities.
+
+### Local workstation example (Linux / macOS; not yet end-to-end tested)
+
+You need Python 3.11+, Git, an SSH client, a running SSH **server**, and working key-based authentication. Enabling the SSH server can require administrator privileges.
+
+1. Add an alias to your computer's `~/.ssh/config` and adjust the username/key:
+
+   ```sshconfig
+   Host my-computer
+       HostName 127.0.0.1
+       User your-local-username
+       Port 22
+       IdentityFile ~/.ssh/id_ed25519
+   ```
+
+   Check `ssh -o BatchMode=yes my-computer hostname` before proceeding. Installing an SSH client alone does not start an SSH server.
+
+2. Install the project in a local Python virtual environment:
+
+   ```bash
+   git clone https://github.com/Double-wk/ChatGPT-MCP-Bridge.git
+   cd ChatGPT-MCP-Bridge
+   python3.11 -m venv .venv
+   . .venv/bin/activate
+   python -m pip install -e . uvicorn httpx starlette python-multipart
+   install -d -m 700 "$HOME/.config/ssh-mcp"
+   ```
+
+   Add a target to `~/.config/ssh-mcp/servers.toml`. If you already have a file, **merge this host into it rather than overwriting it**:
+
+   ```toml
+   [settings]
+   ssh_config_path = "~/.ssh/config"
+   known_hosts = true
+
+   [servers.my-computer]
+   description = "Local workstation through SSH"
+   ```
+
+   Use file mode `600`. A new deployment needs **two distinct private tokens** (never overwrite existing files):
+
+   ```bash
+   umask 077
+   for name in http-token gateway-token; do
+     file="$HOME/.config/ssh-mcp/$name"
+     if [ ! -f "$file" ]; then
+       python -c 'import secrets; print(secrets.token_urlsafe(48))' > "$file"
+     fi
+     chmod 600 "$file"
+   done
+   chmod 600 "$HOME/.config/ssh-mcp/servers.toml"
+   ```
+
+3. To try the local MCP HTTP backend from the project directory:
+
+   ```bash
+   export SSH_MCP_PROJECT_DIR="$PWD"
+   export SSH_MCP_CONDA_PREFIX="$PWD/.venv"
+   bash deploy/run-http.sh
+   ```
+
+   Despite its name, `SSH_MCP_CONDA_PREFIX` may point to a virtual environment: the launcher uses its `bin/blc-ssh-mcp` entry point. Ensure port 8000 is available.
+
+4. For **ChatGPT web**, complete the **GitHub OAuth, private tokens, gateway 8200, HTTPS Tunnel, and connector** steps below using your local paths instead of the example server paths. On macOS install a native `cloudflared` binary; the bundled `cloudflared/cloudflared` is **Linux x86_64 only** and will not run natively on macOS or Windows. Set `SSH_MCP_CONDA_PREFIX` to your local virtual environment when starting the gateway.
+
+> **Security:** Prefer an isolated test environment and a low-privilege user. Choose **Always ask** for plugin actions, or at minimum require confirmation for writes; avoid **Allow all tools**. A separate account does not guarantee exemption from platform policies or enforcement.
+
 ## Complete setup (five steps)
 
-Perform these steps on the Linux server running MCP, not the computer from which you open ChatGPT. If services already exist, inspect their ports and configuration instead of starting duplicates.
+The following is the **tested Linux server deployment example**, using server-specific `/home/test/Double` and Conda paths. When hosting MCP on your own computer, ports 8000/8200 and the HTTPS Tunnel can instead run **locally**; adapt the paths, Python environment, and `cloudflared` binary as described above. Do not copy the example server paths into a local workstation setup.
 
 ### 1. Clone the repository and configure Conda
 
@@ -296,6 +375,6 @@ Tokens are stored only as **SHA-256 digests** in a private SQLite database. Refr
 
 ## Git history and deployment policy
 
-The published `main` branch deliberately has **one root commit** containing the latest snapshot. Updating it this way rewrites history: existing clones may need to be re-cloned or explicitly reconciled. Older objects may still exist in caches or other clones.
+The `main` branch retains a **complete, append-only Git history**. Commit `a37e74e` is the **first stable release (Stable V1)**. All further changes must use ordinary `git commit` and `git push` operations. **Do not squash away, delete, rewrite, or force-push over this stable commit.** Use `git revert` when a history-preserving rollback is needed.
 
 **Updating GitHub does not restart or redeploy the running MCP services.**
