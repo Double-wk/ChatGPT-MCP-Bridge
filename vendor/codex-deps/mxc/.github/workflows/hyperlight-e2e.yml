@@ -1,0 +1,97 @@
+name: Hyperlight E2E Tests
+
+# Retained until the unified test matrix has equivalent Hyperlight coverage.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  hyperlight-e2e:
+    name: WXC-Exec Hyperlight
+    runs-on: windows-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup Rust toolchain
+        run: |
+          rustup update stable
+          rustup target add x86_64-pc-windows-msvc
+
+      - name: Point cargo at the MxcDependencies feed
+        uses: ./.github/actions/setup-cargo-feed
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: src
+
+      - name: Ensure surrogate build consistency
+        shell: pwsh
+        run: |
+          $hlsExe = "src\target\x86_64-pc-windows-msvc\debug\hls\x86_64-pc-windows-msvc\debug\hyperlight_surrogate.exe"
+          if (-not (Test-Path $hlsExe)) {
+            Write-Host "Surrogate missing — clearing hyperlight-host fingerprints to force rebuild"
+            Get-ChildItem "src\target\x86_64-pc-windows-msvc\debug\.fingerprint" -Filter "hyperlight-host-*" -Directory -ErrorAction SilentlyContinue |
+              Remove-Item -Recurse -Force
+          }
+
+      - name: Build with Hyperlight support
+        working-directory: src
+        run: cargo build --features hyperlight --target x86_64-pc-windows-msvc
+
+      - name: Test Hyperlight v0.9 migration rejections
+        shell: pwsh
+        run: |
+          ./tests/scripts/run_hyperlight_network_migration_test.ps1 `
+            -WxcExecPath (Join-Path $env:GITHUB_WORKSPACE "src\target\x86_64-pc-windows-msvc\debug\wxc-exec.exe")
+
+      - name: Diagnose hypervisor environment
+        shell: pwsh
+        run: ./scripts/ci/diagnose-whp.ps1
+
+      - name: Check Windows Hypervisor Platform
+        id: whp-check
+        shell: pwsh
+        run: ./scripts/ci/check-whp.ps1
+
+      - name: Set up Hyperlight (pull rootfs, warm snapshot)
+        if: steps.whp-check.outputs.whp_available == 'true'
+        shell: pwsh
+        run: |
+          # Pulls each runtime's rootfs straight from GHCR (no container
+          # runtime needed), boots it once, and saves the snapshot under
+          # %LOCALAPPDATA%\mxc-hyperlight\<runtime>, where the e2e tests look.
+          $binDir = Join-Path $env:GITHUB_WORKSPACE "src\target\x86_64-pc-windows-msvc\debug"
+          & "$binDir\wxc-exec.exe" --setup-hyperlight=agent,python,node --debug 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "::error::Hyperlight setup failed"
+            exit 1
+          }
+          Write-Host "Image home:"
+          Get-ChildItem (Join-Path $env:LOCALAPPDATA "mxc-hyperlight")
+
+      - name: Run Hyperlight E2E Tests
+        if: steps.whp-check.outputs.whp_available == 'true'
+        shell: pwsh
+        working-directory: src
+        run: |
+          cargo test -p mxc-sdk --test wxc_e2e_tests_e2e_windows --target x86_64-pc-windows-msvc test_hyperlight_suite -- --nocapture
+
+      - name: Upload logs on failure
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: hyperlight-e2e-logs-${{ github.event.pull_request.number || github.run_number }}
+          retention-days: 7
+          path: |
+            logs/
+            **/*.log

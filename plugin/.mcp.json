@@ -1,11 +1,8 @@
 {
   "mcpServers": {
-    "remote_ssh": {
+    "codex_local": {
       "type": "stdio",
-      "command": "uvx",
-      "args": [
-        "blc-ssh-mcp"
-      ]
+      "command": "chatgpt-mcp-bridge"
     }
   }
 }

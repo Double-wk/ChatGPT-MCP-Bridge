@@ -1,0 +1,35 @@
+[package]
+name = "chatgpt-mcp-bridge-runtime"
+version = "2.0.0"
+edition = "2024"
+license = "MPL-2.0"
+
+[workspace]
+
+[[bin]]
+name = "chatgpt-mcp-bridge-runtime"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+serde_json = "1"
+codex-arg0 = { path = "../vendor/codex/codex-rs/arg0" }
+codex-exec-server = { path = "../vendor/codex/codex-rs/exec-server" }
+codex-file-system = { path = "../vendor/codex/codex-rs/file-system" }
+codex-http-client = { path = "../vendor/codex/codex-rs/http-client" }
+codex-protocol = { path = "../vendor/codex/codex-rs/protocol" }
+codex-utils-absolute-path = { path = "../vendor/codex/codex-rs/utils/absolute-path" }
+
+[profile.release]
+opt-level = 1
+debug = 0
+strip = "debuginfo"
+lto = false
+codegen-units = 16
+
+[patch.crates-io]
+tokio-tungstenite = { path = "../vendor/codex-deps/tokio-tungstenite" }
+tungstenite = { path = "../vendor/codex-deps/tungstenite" }
+
+[patch."ssh://git@github.com/openai-oss-forks/tungstenite-rs.git"]
+tungstenite = { path = "../vendor/codex-deps/tungstenite" }

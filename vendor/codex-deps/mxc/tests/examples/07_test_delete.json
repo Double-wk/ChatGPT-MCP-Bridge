@@ -1,0 +1,14 @@
+{
+  "$schema": "../../schemas/stable/mxc-config.schema.1.0.0.json",
+  "version": "1.0.0",
+  "containerId": "CLI-Filesystem-Test",
+  "containment": "processcontainer",
+  "process": {
+    "commandLine": "cmd /c echo Test process container for deletion"
+  },
+  "filesystem": {
+    "readwritePaths": [
+      "C:\\temp\\test"
+    ]
+  }
+}

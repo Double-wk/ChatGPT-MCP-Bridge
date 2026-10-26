@@ -1,0 +1,26 @@
+# Known failures for informational extension scenarios in
+# @modelcontextprotocol/conformance CONFORMANCE_VERSION.
+#
+# Extensions are not selected by a `--spec-version` run and do not count toward
+# SDK tiering. CI runs them separately so a green versioned-spec suite does not
+# hide extension gaps.
+#
+# This is a strict baseline:
+# - an unlisted failure fails the build
+# - a listed scenario that starts passing fails the build as a stale entry
+#
+# When bumping CONFORMANCE_VERSION, review the available extension and
+# pending scenarios and update this file deliberately.
+
+# The SEP-2663 Tasks Extension server scenarios (tracked in #868) all pass and
+# were removed from this baseline. `tasks-status-notifications` remains
+# upstream-skipped pending the subscriptions/listen rewrite; CI will fail if it
+# becomes active but does not pass.
+server: []
+
+client:
+  # Informational OAuth extension scenarios.
+  - auth/enterprise-managed-authorization
+  - auth/dpop
+  - auth/dpop-nonce
+  - auth/wif-jwt-bearer

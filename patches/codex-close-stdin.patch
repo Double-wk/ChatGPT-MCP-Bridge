@@ -1,0 +1,73 @@
+--- a/codex-rs/exec-server/src/local_process.rs
++++ b/codex-rs/exec-server/src/local_process.rs
+@@ -626,6 +626,22 @@
+             }
+             let _ = tokio::time::timeout(remaining, output_notify.notified()).await;
+         }
++    }
++
++    /// Bridge extension: close the process pipe after queued stdin writes drain.
++    pub(crate) async fn close_stdin(
++        &self,
++        params: TerminateParams,
++    ) -> Result<TerminateResponse, JSONRPCErrorError> {
++        let processes = self.inner.processes.lock().await;
++        let Some(ProcessEntry::Running(process)) = processes.get(&params.process_id) else {
++            return Err(invalid_params("unknown or starting process".to_string()));
++        };
++        if process.tty {
++            return Err(invalid_params("PTY EOF must be sent using a terminal control character".to_string()));
++        }
++        process.session.close_stdin();
++        Ok(TerminateResponse { running: process.exit_code.is_none() })
+     }
+ 
+     pub(crate) async fn exec_write(
+--- a/codex-rs/exec-server/src/server/process_handler.rs
++++ b/codex-rs/exec-server/src/server/process_handler.rs
+@@ -55,6 +55,13 @@
+         self.process.exec_read(params).await
+     }
+ 
++    pub(crate) async fn close_stdin(
++        &self,
++        params: TerminateParams,
++    ) -> Result<TerminateResponse, JSONRPCErrorError> {
++        self.process.close_stdin(params).await
++    }
++
+     pub(crate) async fn exec_write(
+         &self,
+         params: WriteParams,
+--- a/codex-rs/exec-server/src/server/handler.rs
++++ b/codex-rs/exec-server/src/server/handler.rs
+@@ -244,6 +244,14 @@
+         Ok(response)
+     }
+ 
++    pub(crate) async fn close_stdin(
++        &self,
++        params: TerminateParams,
++    ) -> Result<TerminateResponse, JSONRPCErrorError> {
++        let session = self.require_initialized_for("exec")?;
++        session.process().close_stdin(params).await
++    }
++
+     pub(crate) async fn exec_write(
+         &self,
+         params: WriteParams,
+--- a/codex-rs/exec-server/src/server/registry.rs
++++ b/codex-rs/exec-server/src/server/registry.rs
+@@ -124,6 +124,12 @@
+         },
+     );
+     router.request(
++        "process/closeStdin",
++        |handler: Arc<ExecServerHandler>, params: TerminateParams| async move {
++            handler.close_stdin(params).await
++        },
++    );
++    router.request(
+         EXEC_WRITE_METHOD,
+         |handler: Arc<ExecServerHandler>, params: WriteParams| async move {
+             handler.exec_write(params).await

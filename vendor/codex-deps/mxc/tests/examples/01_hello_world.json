@@ -1,0 +1,9 @@
+{
+  "$schema": "../../schemas/stable/mxc-config.schema.1.0.0.json",
+  "version": "1.0.0",
+  "containerId": "CLI-HelloWorld",
+  "containment": "processcontainer",
+  "process": {
+    "commandLine": "python -c \"import sys; print('Hello from MXC!'); print(f'Python version: {sys.version}'); print('Script executed successfully in process container')\""
+  }
+}

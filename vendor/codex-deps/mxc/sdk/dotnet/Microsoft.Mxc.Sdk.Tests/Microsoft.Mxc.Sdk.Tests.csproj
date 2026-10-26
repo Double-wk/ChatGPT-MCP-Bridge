@@ -1,0 +1,81 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <!-- xUnit v3 test projects are executables that run themselves. -->
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <!-- The native detail struct is marshalled with raw pointers. -->
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <DefineConstants Condition="'$(MxcWithWslc)' == 'true'">$(DefineConstants);MXC_WITH_WSLC</DefineConstants>
+    <DefineConstants Condition="'$(MxcWithIsolationSession)' == 'true'">$(DefineConstants);MXC_WITH_ISOLATION_SESSION</DefineConstants>
+    <MxcSrcDir>$(MSBuildProjectDirectory)/../../../src</MxcSrcDir>
+    <MxcTestCargoTargetDir>$(MxcSrcDir)/target/dotnet-test-support</MxcTestCargoTargetDir>
+    <!-- Test isolation overrides are compiled only with Rust debug assertions,
+         including when the managed tests themselves run in Release. -->
+    <MxcTestCargoProfileDir>debug</MxcTestCargoProfileDir>
+    <MxcTestCargoFeatures>dotnetsdk test-support</MxcTestCargoFeatures>
+    <MxcTestCargoFeatures Condition="'$(MxcWithIsolationSession)' == 'true' and $([MSBuild]::IsOSPlatform('Windows'))">$(MxcTestCargoFeatures) isolation_session</MxcTestCargoFeatures>
+    <MxcTestCargoFeatures Condition="'$(MxcWithWslc)' == 'true' and $([MSBuild]::IsOSPlatform('Windows'))">$(MxcTestCargoFeatures) wslc</MxcTestCargoFeatures>
+    <MxcTestNativeFileName Condition="$([MSBuild]::IsOSPlatform('Windows'))">mxc_ffi.dll</MxcTestNativeFileName>
+    <MxcTestNativeFileName Condition="$([MSBuild]::IsOSPlatform('OSX'))">libmxc_ffi.dylib</MxcTestNativeFileName>
+    <MxcTestNativeFileName Condition="'$(MxcTestNativeFileName)' == ''">libmxc_ffi.so</MxcTestNativeFileName>
+    <MxcUsePrebuiltTestNativeLibrary Condition="'$(MxcTestPrebuiltNativeLibrary)' != ''">true</MxcUsePrebuiltTestNativeLibrary>
+    <MxcUsePrebuiltTestNativeLibrary Condition="'$(MxcUsePrebuiltTestNativeLibrary)' == ''">false</MxcUsePrebuiltTestNativeLibrary>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.0.0" />
+  </ItemGroup>
+
+  <Target Name="BuildMxcTestSupportNativeLibrary"
+          AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(MxcUsePrebuiltTestNativeLibrary)' != 'true'">
+    <Exec Command="rustc -vV"
+          WorkingDirectory="$(MxcSrcDir)"
+          ConsoleToMSBuild="true"
+          StandardOutputImportance="low">
+      <Output TaskParameter="ConsoleOutput" ItemName="MxcTestRustcVersion" />
+    </Exec>
+    <ItemGroup>
+      <MxcTestRustcHostLine Include="@(MxcTestRustcVersion)"
+                            Condition="$([MSBuild]::ValueOrDefault('%(Identity)', '').StartsWith('host: '))" />
+    </ItemGroup>
+    <PropertyGroup>
+      <MxcTestRustcHostLine>@(MxcTestRustcHostLine)</MxcTestRustcHostLine>
+    </PropertyGroup>
+    <Error Condition="'$(MxcTestRustcHostLine)' == ''"
+           Text="mxc: 'rustc -vV' reported no host triple, so the isolated test-support build cannot be pinned to this host. Ensure the Rust toolchain is installed and on PATH." />
+    <PropertyGroup>
+      <MxcTestRustHostTriple>$(MxcTestRustcHostLine.Replace('host: ', '').Trim())</MxcTestRustHostTriple>
+      <MxcTestNativeOutput>$(MxcTestCargoTargetDir)/$(MxcTestRustHostTriple)/$(MxcTestCargoProfileDir)/$(MxcTestNativeFileName)</MxcTestNativeOutput>
+    </PropertyGroup>
+    <Message Importance="high" Text="mxc: building isolated test-support native library for $(MxcTestRustHostTriple)" />
+    <Exec Command="cargo build -p mxc_ffi --features &quot;$(MxcTestCargoFeatures)&quot; --target $(MxcTestRustHostTriple) --target-dir &quot;$(MxcTestCargoTargetDir)&quot;" WorkingDirectory="$(MxcSrcDir)" />
+    <Error Condition="!Exists('$(MxcTestNativeOutput)')"
+           Text="The test-support native build did not produce $(MxcTestNativeOutput)." />
+    <Copy SourceFiles="$(MxcTestNativeOutput)"
+          DestinationFolder="$(TargetDir)" />
+  </Target>
+
+  <Target Name="StageMxcTestSupportNativeLibrary"
+          AfterTargets="Build"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(MxcUsePrebuiltTestNativeLibrary)' == 'true'">
+    <Error Condition="!Exists('$(MxcTestPrebuiltNativeLibrary)')"
+           Text="The prebuilt test-support native library does not exist at $(MxcTestPrebuiltNativeLibrary)." />
+    <Copy SourceFiles="$(MxcTestPrebuiltNativeLibrary)"
+          DestinationFolder="$(TargetDir)" />
+  </Target>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Microsoft.Mxc.Sdk\Microsoft.Mxc.Sdk.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\..\tests\policy\sdk-v1\**\*.json" Link="policy\sdk-v1\%(RecursiveDir)%(Filename)%(Extension)" />
+  </ItemGroup>
+
+</Project>

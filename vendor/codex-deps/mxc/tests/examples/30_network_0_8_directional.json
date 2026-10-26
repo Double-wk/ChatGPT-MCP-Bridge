@@ -1,0 +1,33 @@
+{
+  "$schema": "../../schemas/stable/mxc-config.schema.1.0.0.json",
+  "version": "1.0.0",
+  "containerId": "directional-network-example",
+  "containment": "processcontainer",
+  "process": {
+    "commandLine": "cmd.exe /c echo schema 1.0 directional network example"
+  },
+  "network": {
+    "egress": {
+      "default": "deny",
+      "allow": [
+        {
+          "to": [
+            {
+              "cidr": "192.0.2.0/24"
+            }
+          ],
+          "ports": [
+            {
+              "protocol": "tcp",
+              "port": 443
+            }
+          ]
+        }
+      ]
+    },
+    "ingress": {
+      "default": "deny",
+      "hostLoopback": "deny"
+    }
+  }
+}

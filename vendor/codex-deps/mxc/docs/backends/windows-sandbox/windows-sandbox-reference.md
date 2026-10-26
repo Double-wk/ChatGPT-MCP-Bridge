@@ -1,0 +1,335 @@
+# Windows Sandbox Backend - Reference
+
+> **Audience:** MXC consumers and developers
+
+For the overview and policy matrix, see
+[windows-sandbox.md](windows-sandbox.md).
+
+## Guest Protocol
+
+The host opens four TCP connections on boot:
+
+| Channel | Purpose |
+|---|---|
+| Control | Preamble and JSON control messages |
+| Stdin | Child standard input |
+| Stdout | Child standard output |
+| Stderr | Child standard error |
+
+Execution through container lifecycle operations reconnects the three data channels after each
+`StreamsReady`; the control channel remains attached to the daemon.
+
+### Authentication and channel roles
+
+Every connection starts with:
+
+```text
+[32-byte per-launch nonce][1-byte ChannelRole]
+```
+
+The guest consumes and deletes the nonce file, authenticates each socket, and
+pairs it by the declared control/stdin/stdout/stderr role. Invalid,
+duplicate-role, unexpected-role, and stalled connections are dropped.
+
+### Control preamble and messages
+
+The guest begins the control channel with:
+
+```text
+["WSBP"][protocol version: u32 little-endian]
+```
+
+A magic or version mismatch rejects the connection before framed messages.
+Control messages then use a four-byte little-endian length followed by JSON.
+
+| Message | Direction | Purpose |
+|---|---|---|
+| `Ready` | Guest to host | Guest is ready |
+| `Exec(ExecRequest)` | Host to guest | Execute a command |
+| `Exit(ExitNotification)` | Guest to host | Report completion |
+| `StreamsReady` | Guest to host | Data channels may reconnect |
+| `Ping` / `Pong` | Either | Liveness |
+
+## Lifecycle Daemon Inter-Process Communication
+
+The daemon listens on an OS-assigned localhost port recorded in `daemon.json`.
+A phase process sends:
+
+```text
+<VERB> <daemon-nonce>\n
+```
+
+| Verb | Following data | Reply |
+|---|---|---|
+| `PING` | None | `PONG\n` |
+| `STOP` | None | `OK\n`, followed by daemon teardown |
+| `EXEC` | Binary `ExecStart` frame | `OK\n`, output frames, then one exit frame |
+
+`EXEC` output uses the codec in `windows_sandbox_lifecycle::ipc_exec`.
+Single-flight admission returns `ERR busy` while another execution owns the
+guest slot and `ERR not_ready` while the VM is booting.
+
+The daemon restores or marks-unusable the guest slot and releases its mutex
+before writing the terminal exit frame. This makes terminal completion the point
+at which a new execution may be admitted.
+
+The daemon record (`daemon.json`) also carries the version of its inter-process
+communication protocol, and the client and daemon check that version during communication.
+The client sends its version as the trailing token of the `EXEC` line
+(`EXEC <nonce> <proto>`), and the daemon refuses a mismatch with
+`ERR protocol …` **before** any frame exchange. Because the check is enforced by
+the daemon, it also protects a client that never consults the record. A client
+that predates versioning sends no token and is treated as the legacy version
+(`1`), so a future daemon still refuses it rather than misframing its request. A
+daemon left by a different mxc install can still authenticate (its nonce is in
+the record), but a mismatched line/frame format is rejected cleanly. Such a
+sandbox must be torn down at the process level (see `--force-reclaim`) and
+re-provisioned. `stop`/`deprovision` still use the stable single-line `STOP`
+command so an orphaned VM can always be reclaimed.
+
+## Host State
+
+### Create-and-run execution
+
+```text
+%TEMP%\wxc-wsb\oneshot\<run-id>\
+  oneshot.marker
+  config\wxc-windows-sandbox.wsb
+  rendezvous\
+    bootstrap.cmd
+    bootstrap.log
+    nonce.bin
+    rendezvous.txt
+```
+
+### Container lifecycle operations
+
+```text
+%TEMP%\wxc-wsb\state-aware\
+  daemon.json
+  <sandbox-token>\
+    record.json
+    config\wxc-windows-sandbox.wsb
+    daemon.log
+    rendezvous\
+      bootstrap.cmd
+      bootstrap.log
+      nonce.bin
+      rendezvous.txt
+```
+
+Directories are owner-only and ownership-verified before trusted state is read.
+Records are written through same-directory atomic rename.
+
+Process identities pair PID with creation time. This prevents a recycled PID
+from authorising teardown of another process.
+
+## VM Configuration
+
+The `.wsb` file always maps:
+
+| Host path | Guest path | Access |
+|---|---|---|
+| Guest binary directory | `C:\Sandbox-Guest` | Read-only |
+| Per-run rendezvous directory | `C:\Sandbox-Rendezvous` | Read-write |
+
+Filesystem policy adds existing directories at the same absolute path inside
+the guest. The generated configuration disables vGPU, enables networking for
+the bridge, and runs `C:\Sandbox-Rendezvous\bootstrap.cmd`.
+
+No host runtime, including Python, is implicitly discovered or mapped.
+
+## Create-and-Run Launch
+
+1. Reject an ambient Tokio runtime before side effects.
+2. Validate policy and acquire the host VM mutex.
+3. Reconcile stale create-and-run markers and live VM processes.
+4. Create secured run state and write the initial launcher marker.
+5. Generate the nonce, bootstrap script, and `.wsb` file.
+6. Launch `WindowsSandbox.exe`.
+7. Capture and persist VM ownership proof.
+8. Wait for rendezvous and authenticate the four guest channels.
+9. Send one execution request and relay stdio.
+10. Tear down the owned VM and clear the marker after confirmed exit.
+
+## Container Lifecycle Operations
+
+### Provision
+
+Provision generates a strict `wsb:<8-lowercase-hex>` ID and writes a
+`Provisioned` record containing the immutable mapped-folder policy. It does not
+launch a VM.
+
+### Start
+
+Start acquires the transition lock, validates state, and launches
+`wxc-windows-sandbox-daemon.exe --token <token>` as a detached process. The
+daemon authentication nonce is written to stdin and the pipe is closed.
+
+The daemon:
+
+1. Creates `daemon.json` with `ready:false`.
+2. Acquires the host VM mutex.
+3. Reconciles any provably-owned orphan.
+4. Launches the VM and persists ownership proof.
+5. Connects to the guest and marks `ready:true`.
+6. Serves `PING`, `EXEC`, and `STOP`.
+
+Start polls the record until readiness or timeout. A stale daemon or VM is
+reclaimed only when recorded process identities intersect the live set. If the
+host's single VM slot is already held by another VM owner (a concurrent create-and-run
+run or another live daemon), the daemon exits with a distinct busy code and
+start surfaces `backend_unavailable` rather than an opaque error.
+
+The detached daemon's stderr is captured to `daemon.log` in the per-sandbox
+record directory (owner-only, alongside `record.json`), so boot, teardown, and
+orphan-reclaim failures in the VM-owning process are diagnosable after the fact.
+
+### Exec
+
+Exec authenticates to the daemon and requests single-flight admission. The
+daemon streams stdin, stdout, and stderr while reading the guest exit message.
+It then reconnects the data channels, restores the reusable guest slot, releases
+the slot lock, and writes the terminal exit frame.
+
+If an exec fails, or the post-exec data-channel reconnect fails, the daemon
+marks the held guest slot **unusable** and records the reason. This is terminal
+for the sandbox's session: the daemon cannot safely re-establish its single held
+guest connection mid-session, so there is no automatic recovery back to a ready
+state. Every subsequent exec fails fast with the recorded reason, while `stop`
+and `deprovision` continue to work. To run again, tear the sandbox down
+(`stop`/`deprovision`) and provision a fresh one.
+
+A host-side watchdog bounds each exec: if the guest never reports completion
+within its own `timeout` plus a fixed grace, the daemon stops waiting, marks the
+slot unusable, and returns a synthetic timeout exit frame. This keeps a
+frozen-but-alive guest from wedging the single-flight slot indefinitely — the VM
+crash watchdog only fires once the VM processes are actually gone.
+
+### Stop and deprovision
+
+Stop sends `STOP`, waits for the daemon and VM to exit, and returns the record
+to `Provisioned`. Deprovision stops if needed and removes the sandbox directory.
+Failed probes or incomplete teardown preserve records for a later retry.
+
+## Policy Validation
+
+### Filesystem
+
+Mapped roots must be absolute existing directories. The backend rejects:
+
+- files;
+- conflicting read-only/read-write entries;
+- nested mapped roots;
+- a denied path equal to, inside, or containing a mapped share.
+
+A denied path outside all shares is already inaccessible because Windows
+Sandbox shares nothing by default.
+
+Filesystem policy for container lifecycle operations is accepted only at provision and is immutable
+afterward.
+
+### Network and UI
+
+Create-and-run execution supports only default network policy `block`; `allow`, host filters,
+and proxies are rejected.
+
+Container lifecycle operations reject network and UI policy. The guest firewall still
+enforces unconditional network lockdown.
+
+## Teardown and Recovery
+
+Create-and-run execution and container lifecycle operations share `Local\wxc-wsb-vm`, serialising ownership
+of the host's single Windows Sandbox VM.
+
+Cleanup rules:
+
+- a live owner prevents another launch;
+- prior ownership proof intersecting the live set authorises reclaim;
+- a live VM without intersecting proof is foreign and left untouched (but see
+  `--force-reclaim` below);
+- PID creation time is rechecked on the same process handle before
+  `TerminateProcess`;
+- durable records are removed only after host processes are confirmed gone;
+- probe failure or timeout preserves records.
+
+Lingering SYSTEM-owned `vmmem*` processes are not ownership targets and do not
+block a new launch after the `WindowsSandbox*` host processes exit.
+
+### Hard-kill orphans and `--force-reclaim`
+
+Teardown-on-exit is best-effort, **not** kernel-guaranteed. Between launching
+the VM and capturing its process-identity proof, a hard-kill of the launcher
+(`TerminateProcess`/OOM/power-loss — no destructor or console handler runs) can
+leave a live VM with no ownership proof. Because Windows Sandbox is a
+machine-wide singleton, one such unprovable orphan wedges the backend: every
+later launch classifies it as foreign and refuses.
+
+Recover by closing the leftover sandbox window, or re-running with
+`--force-reclaim`, which tears down an unprovable VM using the live process
+snapshot as the kill set. Being proofless, it may also kill a foreign or
+manual sandbox; it never overrides an active mxc run or an unreadable probe. It
+reaches the detached daemon via the inherited `WXC_WSB_FORCE_RECLAIM` env var.
+
+## Legacy Configuration
+
+These fields remain parseable but do not control either live execution path:
+
+- `windowsSandbox.idleTimeoutMs`
+- `windowsSandbox.idleTimeout`
+- `windowsSandbox.daemonPipeName`
+
+Container lifecycle operations have no idle watchdog.
+
+## Debugging
+
+Inspect create-and-run records under:
+
+```powershell
+$root = Join-Path $env:TEMP "wxc-wsb\oneshot"
+```
+
+Inspect lifecycle records under:
+
+```powershell
+$root = Join-Path $env:TEMP "wxc-wsb\state-aware"
+Get-Content (Join-Path $root "daemon.json")
+# Detached daemon diagnostics (per sandbox token):
+Get-Content (Join-Path $root "<sandbox-token>\daemon.log")
+```
+
+Check host processes:
+
+```powershell
+Get-Process | Where-Object { $_.ProcessName -like "WindowsSandbox*" }
+```
+
+Do not terminate processes by name during normal cleanup; use the recorded
+PID-plus-creation-time ownership proof.
+
+## Key Source Files
+
+| File | Purpose |
+|---|---|
+| `src/mxc-sdk/src/core/mxc_engine/run.rs` | Backend selection for create-and-run execution |
+| `src/mxc-sdk/src/core/mxc_engine/state_aware.rs` | Backend selection for container lifecycle operations |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/one_shot.rs` | Create-and-run orchestration |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/state_aware.rs` | Lifecycle operation implementation |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/control_plane.rs` | Records, state decisions, IPC constants, and locks |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/teardown.rs` | Create-and-run markers and cleanup |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/bridge.rs` | Guest bridge and stream relay |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/ipc_exec.rs` | Daemon exec frame codec |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/vm.rs` | VM generation, launch, proof, and teardown |
+| `src/mxc-sdk/src/backends/windows_sandbox/lifecycle/policy.rs` | Policy mapping and validation |
+| `src/mxc-sdk/src/bin/windows_sandbox_daemon/main.rs` | Lifecycle daemon ownership and launch |
+| `src/mxc-sdk/src/bin/windows_sandbox_daemon/control_server.rs` | Daemon IPC and single-flight execution |
+| `src/mxc-sdk/src/backends/windows_sandbox/common/auth.rs` | Nonce and role authentication |
+| `src/mxc-sdk/src/backends/windows_sandbox/common/sandbox_protocol.rs` | Guest control framing |
+| `src/mxc-sdk/src/bin/windows_sandbox_guest/` | Guest startup, execution, firewall, and job object |
+
+## E2E Tests
+
+```powershell
+.\tests\scripts\run_windows_sandbox_one_shot_tests.ps1
+.\tests\scripts\run_windows_sandbox_state_aware_tests.ps1
+```

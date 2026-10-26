@@ -1,0 +1,17 @@
+[Unit]
+Description=Authenticated loopback Codex MCP bridge
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/test/Double/ChatGPT-MCP-Bridge
+Environment=CODEX_MCP_ENV_PREFIX=/mnt/tcm_agent_data/Double/envs/chatgpt-mcp-bridge
+ExecStart=/bin/bash /home/test/Double/ChatGPT-MCP-Bridge/deploy/run-http.sh
+Restart=on-failure
+RestartSec=5
+UMask=0077
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target

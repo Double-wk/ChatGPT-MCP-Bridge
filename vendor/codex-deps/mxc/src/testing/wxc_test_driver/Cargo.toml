@@ -1,0 +1,18 @@
+[package]
+name = "wxc_test_driver"
+publish = false
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "wxc-test-driver"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(windows)'.build-dependencies]
+cc = "1"
+winresource.workspace = true

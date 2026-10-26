@@ -2,7 +2,7 @@
 # Starts localhost HTTP MCP only when port is free; never overwrites the
 # working service PID on a failed duplicate start.
 set -Eeuo pipefail
-ROOT="${SSH_MCP_PROJECT_DIR:-/home/test/Double/ChatGPT-MCP-Bridge}"
+ROOT="${MCP_BRIDGE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 PORT="${SSH_MCP_HTTP_PORT:-8000}"
 cd "$ROOT"
 [[ "$PORT" =~ ^[0-9]+$ ]] || { echo "invalid TCP port" >&2; exit 1; }

@@ -1,0 +1,15 @@
+{
+    "$schema": "../../schemas/stable/mxc-config.schema.1.0.0.json",
+    "version": "1.0.0",
+    "containment": "seatbelt",
+    "process": {
+        "commandLine": "echo 'GUI access enabled \u2014 custom GUI apps can create windows under this profile'"
+    },
+    "ui": {
+        "disable": false,
+        "clipboard": "all"
+    },
+    "seatbelt": {
+        "guiAccess": true
+    }
+}

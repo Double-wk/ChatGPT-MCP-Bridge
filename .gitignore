@@ -10,7 +10,7 @@ config/servers.toml.bak*
 *.pfx
 *.secret
 credentials/
-secrets/
+/secrets/
 gateway-token
 http-token
 
@@ -27,9 +27,26 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 dist/
-build/
+/build/
 .pytest_cache/
 .coverage
 .idea/
 .vscode/
 .DS_Store
+
+# Generated native runtime and local build tools
+runtime/target/
+runtime/bwrap/target/
+.build-tools/
+.venv-test/
+src/chatgpt_mcp_bridge/bin/chatgpt-mcp-bridge-runtime
+src/chatgpt_mcp_bridge/bin/codex-linux-sandbox
+src/chatgpt_mcp_bridge/bin/codex-resources/
+
+runtime/agent/target/
+src/chatgpt_mcp_bridge/bin/chatgpt-mcp-bridge
+
+.build/
+
+# Public upstream certificate fixtures are source test data.
+!vendor/codex/codex-rs/http-client/tests/fixtures/*.pem
