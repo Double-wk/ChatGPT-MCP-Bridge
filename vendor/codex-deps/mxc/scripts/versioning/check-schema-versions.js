@@ -1,0 +1,212 @@
+#!/usr/bin/env node
+// Copyright (c) Microsoft Corporation.
+// Licensed under the MIT License.
+
+// Validates the SCHEMA version constants — the exact Rust contract registry,
+// the SDKs, and the schema filenames must all agree with the canonical source
+// of truth at schemas/schema-version.json. This tracks the config wire format
+// and is deliberately separate from the PRODUCT version (Cargo / npm package),
+// which is checked by scripts/check-version-sync.js.
+//
+// Run from anywhere (paths are resolved relative to the repo root):
+//
+//   node scripts/versioning/check-schema-versions.js
+
+const { readFileSync } = require("fs");
+const { join } = require("path");
+const {
+  loadContractRegistry,
+  requestRootsForContract,
+  validateSdkMajorTargets,
+} = require("./lib/contract-registry.js");
+
+const repoRoot = join(__dirname, "..", "..");
+const errors = [];
+
+function read(...parts) {
+  return readFileSync(join(repoRoot, ...parts), "utf8");
+}
+
+// ---------------------------------------------------------------------------
+// Schema version constants vs canonical source
+// ---------------------------------------------------------------------------
+const schemaVer = JSON.parse(read("schemas", "schema-version.json"));
+const {
+  min,
+  maxSupported,
+  stateAware,
+  stateAwareWindowsSandbox,
+  stateAwareWslc,
+  stableLatest,
+  sdkMajorTargets,
+} = schemaVer;
+const sdkV1Target = sdkMajorTargets["1"];
+
+// Assert a regex captures exactly `expected` in `text`.
+function expectConst(file, text, label, regex, expected) {
+  const m = regex.exec(text);
+  if (!m) {
+    errors.push(`${file}: could not find ${label} (pattern ${regex})`);
+    return;
+  }
+  if (m[1] !== expected) {
+    errors.push(
+      `${file}: ${label} is "${m[1]}" but canonical schema-version expects "${expected}"`
+    );
+  }
+}
+
+// -- Exact Rust contract registry (mxc_contract) --
+let registry = [];
+let registryByVersion = new Map();
+try {
+  ({ registry, byVersion: registryByVersion } = loadContractRegistry());
+} catch (error) {
+  errors.push(`Could not load exact Rust contract registry: ${error.message}`);
+}
+
+if (registry[0]?.version !== min) {
+  errors.push(
+    `Exact Rust contract registry minimum is "${registry[0]?.version}" but canonical min is "${min}"`
+  );
+}
+if (registry.at(-1)?.version !== maxSupported) {
+  errors.push(
+    `Exact Rust contract registry maximum is "${registry.at(-1)?.version}" but canonical maxSupported is "${maxSupported}"`
+  );
+}
+const publishedVersions = registry
+  .filter(contract => contract?.status === "published")
+  .map(contract => contract.version);
+if (publishedVersions.at(-1) !== stableLatest) {
+  errors.push(
+    `Exact Rust contract registry latest published version is "${publishedVersions.at(-1)}" but canonical stableLatest is "${stableLatest}"`
+  );
+}
+for (const [label, version, requiredRoot] of [
+  ["stateAware", stateAware, "isolation_session_provision"],
+  [
+    "stateAwareWindowsSandbox",
+    stateAwareWindowsSandbox,
+    "windows_sandbox_provision",
+  ],
+  ["stateAwareWslc", stateAwareWslc, "wslc_provision"],
+]) {
+  if (!registryByVersion.has(version)) {
+    errors.push(`Canonical ${label} version "${version}" is absent from the exact Rust registry`);
+    continue;
+  }
+  try {
+    const roots = requestRootsForContract(registryByVersion.get(version));
+    if (!roots.has(requiredRoot)) {
+      errors.push(
+        `Canonical ${label} version "${version}" does not support ${requiredRoot}`
+      );
+    }
+  } catch (error) {
+    errors.push(
+      `Canonical ${label} version "${version}" has no exact request-root matrix: ${error.message}`
+    );
+  }
+}
+
+// -- SDK (shared V1 target, high-level builder, state-aware types) --
+const contractVersionTs = read("sdk", "node", "src", "v1", "contract-version.ts");
+expectConst(
+  "contract-version.ts",
+  contractVersionTs,
+  "SDK_CONTRACT_VERSION",
+  /const SDK_CONTRACT_VERSION\s*=\s*'([^']+)'/,
+  sdkV1Target
+);
+const containerTs = read("sdk", "node", "src", "v1", "container.ts");
+if (
+  !/import\s*\{\s*SDK_CONTRACT_VERSION\s*\}\s*from\s*['"]\.\/contract-version\.js['"]/.test(containerTs) ||
+  !/export\s*\{\s*SDK_CONTRACT_VERSION\s*\}/.test(containerTs)
+) {
+  errors.push("container.ts: SDK_CONTRACT_VERSION must import and re-export the shared contract-version.ts target");
+}
+const lifecycleTs = read("sdk", "node", "src", "v1", "lifecycle-types.ts");
+if (
+  !/export\s*\{\s*SDK_CONTRACT_VERSION\s*\}\s*from\s*['"]\.\/contract-version\.js['"]/.test(lifecycleTs)
+) {
+  errors.push("lifecycle-types.ts: SDK_CONTRACT_VERSION must re-export the shared contract-version.ts target");
+}
+// -- C# SDK (sdk/dotnet/Microsoft.Mxc.Sdk/V1/SchemaVersions.cs) --
+const schemaVersionsCs = read(
+  "sdk",
+  "dotnet",
+  "Microsoft.Mxc.Sdk",
+  "V1",
+  "SchemaVersions.cs"
+);
+for (const [label, expected] of [
+  ["Minimum", min],
+  ["MaximumSupported", maxSupported],
+  ["LatestStable", stableLatest],
+]) {
+  expectConst(
+    "SchemaVersions.cs",
+    schemaVersionsCs,
+    label,
+    new RegExp(`const string ${label}\\s*=\\s*"([^"]+)"`),
+    expected
+  );
+}
+const sdkContractMatch =
+  /const string SdkContract\s*=\s*(LatestStable|"([^"]+)")/.exec(
+    schemaVersionsCs
+  );
+if (!sdkContractMatch) {
+  errors.push("SchemaVersions.cs: could not find SdkContract");
+} else {
+  const sdkContract =
+    sdkContractMatch[1] === "LatestStable"
+      ? stableLatest
+      : sdkContractMatch[2];
+  if (sdkContract !== sdkV1Target) {
+    errors.push(
+      `SchemaVersions.cs: SdkContract resolves to "${sdkContract}" but canonical sdkMajorTargets[1] expects "${sdkV1Target}"`
+    );
+  }
+}
+if (
+  !/const string StateAware\s*=\s*SdkContract\s*;/.test(schemaVersionsCs)
+) {
+  errors.push(
+    "SchemaVersions.cs: StateAware must alias the high-level SdkContract"
+  );
+}
+
+// -- Canonical stable + development descriptors have the expected status --
+if (registryByVersion.get(stableLatest)?.status !== "published") {
+  errors.push(`Canonical stableLatest "${stableLatest}" is not published in the exact registry`);
+}
+if (registryByVersion.get(maxSupported)?.status !== "development") {
+  errors.push(
+    `Canonical maxSupported "${maxSupported}" is not the development contract in the exact registry`
+  );
+}
+try {
+  validateSdkMajorTargets(sdkMajorTargets, registry);
+} catch (error) {
+  errors.push(`Invalid SDK major targets: ${error.message}`);
+}
+
+// ---------------------------------------------------------------------------
+// Report
+// ---------------------------------------------------------------------------
+if (errors.length > 0) {
+  console.error("Schema version sync FAILED:");
+  for (const e of errors) console.error(`  - ${e}`);
+  console.error(
+    "\nFix the offending constant, or update schemas/schema-version.json if the canonical value changed."
+  );
+  process.exit(1);
+}
+
+console.log(
+  `Schema version sync OK: maxSupported ${maxSupported} ` +
+    `(min ${min}, state-aware ${stateAware}, Windows Sandbox state-aware ${stateAwareWindowsSandbox}, WSLC state-aware ${stateAwareWslc}, ` +
+    `stable ${stableLatest}, SDK major targets ${Object.keys(sdkMajorTargets).length})`
+);

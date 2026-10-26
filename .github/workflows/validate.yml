@@ -1,4 +1,4 @@
-name: Validate SSH MCP packaging and deployment
+name: Validate ChatGPT MCP Bridge
 
 on:
   push:
@@ -8,21 +8,61 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: validate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  lint-and-package:
-    runs-on: ubuntu-latest
+  test-and-package:
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.1'
+      - name: Install native build dependencies
+        run: sudo apt-get update && sudo apt-get install -y libcap-dev libssl-dev pkg-config cmake
+      - name: Prepare Linux sandbox prerequisites
+        run: |
+          # This setting applies only to the disposable hosted test VM.
+          if [[ -f /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          fi
+          unshare --user --map-root-user --net /bin/true
+      - name: Restore native build cache
+        id: native-cache
+        uses: actions/cache/restore@v5
+        with:
+          path: |
+            .build/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: codex-ubuntu24-rust1.99.1-${{ hashFiles('runtime/**/Cargo.lock', 'runtime/**/Cargo.toml', 'runtime/**/src/**', 'vendor/**') }}
+      - name: Build embedded Codex runtime
+        run: bash deploy/build-runtime.sh
+      - name: Save native build cache
+        if: steps.native-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v5
+        with:
+          path: |
+            .build/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: ${{ steps.native-cache.outputs.cache-primary-key }}
+      - name: Verify bundled sandbox can start
+        run: src/chatgpt_mcp_bridge/bin/codex-resources/bwrap --unshare-user --unshare-net --ro-bind / / --proc /proc --dev /dev -- /bin/true
+      - name: Install bridge and test dependencies
+        run: python -m pip install -e '.[dev,gateway]'
       - name: Check shell syntax
-        run: bash -n deploy/setup-conda.sh deploy/run-http.sh deploy/run-stdio.sh deploy/start-nohup.sh cloudflared/run-oauth-tunnel.sh
-      - name: Compile Python source
-        run: python -m compileall -q src gateway scripts deploy integration/tests
-      - name: Install gateway test dependencies
-        run: python -m pip install 'starlette>=0.46,<2' 'httpx>=0.27,<1' 'python-multipart>=0.0.9'
-      - name: Run integration package and OAuth-route tests
-        env:
-          PYTHONPATH: .
-        run: python -m unittest discover -s integration/tests -p 'test*.py' -v
+        run: bash -n deploy/*.sh cloudflared/run-oauth-tunnel.sh
+      - name: Check Python source
+        run: python -m ruff check src tests && python -m compileall -q src scripts deploy tests
+      - name: Run bridge and native execution tests
+        run: python -m pytest -q
+      - name: Build Python wheel
+        run: python -m pip wheel --no-deps --no-build-isolation . -w dist
+      - name: Build desktop plugin
+        run: python scripts/build_plugin.py --output dist/chatgpt-mcp-bridge.zip

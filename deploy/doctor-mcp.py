@@ -1,91 +1,120 @@
 #!/usr/bin/env python3
-"""Authenticated local MCP discovery probe. Never prints bearer secrets.
-
-Runs with the project's Conda interpreter. Verifies initialize, tools/list,
-and read-only list_servers against 127.0.0.1. Use --probe-execute for a fixed,\nread-only hostname command on gpu-local.
-"""
-from __future__ import annotations
-
 import argparse
 import asyncio
-import re
-from pathlib import Path
+import json
 import os
+from pathlib import Path
 import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 
-async def main(probe_execute: bool = False) -> None:
-    token_path = Path(
-        os.environ.get(
-            "SSH_MCP_HTTP_TOKEN_FILE",
-            str(Path.home() / ".config/ssh-mcp/http-token"),
-        )
+async def main(execute=False, agent=False):
+    path = os.getenv(
+        "MCP_BRIDGE_HTTP_TOKEN_FILE",
+        os.getenv(
+            "SSH_MCP_HTTP_TOKEN_FILE", str(Path.home() / ".config/ssh-mcp/http-token")
+        ),
     )
-    token = token_path.read_text(encoding="utf-8").strip()
-    if not token:
-        raise RuntimeError("Bearer token file is empty")
-    port = int(os.environ.get("SSH_MCP_HTTP_PORT", "8000"))
-    url = f"http://127.0.0.1:{port}/mcp"
-    # MCP SDK 2.3.0 takes a configured httpx2.AsyncClient (not headers=).
-    # Its Streamable HTTP context manager yields TWO streams, not three.
+    token = Path(path).read_text().strip()
+    port = int(
+        os.getenv("MCP_BRIDGE_HTTP_PORT", os.getenv("SSH_MCP_HTTP_PORT", "8000"))
+    )
+
+    def data(result):
+        if result.is_error:
+            raise RuntimeError("MCP tool returned an error: " + str(result.content))
+        value = getattr(result, "structured_content", None)
+        if value is not None:
+            if isinstance(value, dict) and isinstance(value.get("result"), str):
+                return json.loads(value["result"])
+            return value
+        return json.loads("".join(x.text for x in result.content if x.type == "text"))
+
     async with httpx2.AsyncClient(
-        headers={"Authorization": f"Bearer {token}"}, timeout=30.0
-    ) as http_client:
-        async with streamable_http_client(url, http_client=http_client) as (reader, writer):
+        headers={"Authorization": "Bearer " + token}, timeout=40
+    ) as client:
+        async with streamable_http_client(
+            f"http://127.0.0.1:{port}/mcp", http_client=client
+        ) as (reader, writer):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()
-                response = await session.list_tools()
-                tools = [tool.name for tool in response.tools]
-                print(f"MCP initialize OK; discovered {len(tools)} tools: {', '.join(tools)}")
-                if "list_servers" not in tools:
-                    raise RuntimeError("Expected list_servers tool was not discovered")
-                result = await session.call_tool("list_servers", arguments={})
-                if result.is_error:
-                    raise RuntimeError("list_servers returned an MCP tool error")
-                print("list_servers OK (read-only; output not printed)")
-                if not probe_execute:
-                    print("SSH command execution has NOT been tested by this script.")
-                    return
-                if "execute" not in tools:
-                    raise RuntimeError("Expected execute tool was not discovered")
-                # Fixed, safe diagnostic; never accepts an arbitrary shell string.
-                execution = await session.call_tool(
+                names = {t.name for t in (await session.list_tools()).tools}
+                expected = {
+                    "get_environment",
                     "execute",
-                    arguments={
-                        "server": "gpu-local",
-                        "command": "hostname",
-                        "timeout": 15,
-                        "force": False,
-                        "dry_run": False,
-                    },
-                )
-                if execution.is_error:
-                    raise RuntimeError("SSH execute MCP call failed; see server logs")
-                output = " ".join(
-                    getattr(item, "text", "")
-                    for item in execution.content
-                    if getattr(item, "type", "") == "text"
-                )
-                if not re.search(r"(?m)^Exit code: 0 [(]", output):
-                    raise RuntimeError(
-                        "SSH execute did not return exit code 0; " +
-                        output[:700].replace(chr(10), " ")
+                    "exec_command",
+                    "write_stdin",
+                    "terminate_process",
+                    "read_file",
+                    "write_file",
+                    "apply_patch",
+                    "start_agent",
+                    "list_agent_tasks",
+                    "get_agent_status",
+                    "next_model_request",
+                    "read_model_request",
+                    "submit_model_response",
+                    "agent_command",
+                    "answer_agent_request",
+                }
+                assert names == expected, sorted(names)
+                data(await session.call_tool("get_environment", arguments={}))
+                print("Authenticated MCP discovery: 16 tools OK")
+                if execute:
+                    result = data(
+                        await session.call_tool(
+                            "execute",
+                            arguments={"command": "printf mcp-ok", "read_only": True},
+                        )
                     )
-                if "bms-51097659-001" not in output:
-                    raise RuntimeError("SSH execute returned an unexpected hostname")
-                print("MCP execute OK: gpu-local -> hostname -> bms-51097659-001 (exit 0)")
+                    assert result["exit_code"] == 0 and result["stdout"] == "mcp-ok", (
+                        result
+                    )
+                    print("Project execution OK")
+                if agent:
+                    created = data(
+                        await session.call_tool(
+                            "start_agent",
+                            arguments={
+                                "objective": "Reply mcp-native-ok. Do not inspect or change any files."
+                            },
+                        )
+                    )
+                    tid = created["thread_id"]
+                    request = data(
+                        await session.call_tool(
+                            "next_model_request",
+                            arguments={"thread_id": tid, "wait_ms": 5000},
+                        )
+                    )
+                    assert "request_id" in request, request
+                    data(
+                        await session.call_tool(
+                            "submit_model_response",
+                            arguments={
+                                "request_id": request["request_id"],
+                                "output_text": "mcp-native-ok",
+                            },
+                        )
+                    )
+                    for _ in range(50):
+                        result = data(
+                            await session.call_tool(
+                                "get_agent_status", arguments={"thread_id": tid}
+                            )
+                        )
+                        if result["thread"]["status"] == "completed":
+                            break
+                        await asyncio.sleep(0.1)
+                    else:
+                        raise RuntimeError("Native response cycle did not finish")
+                    print("Native Codex -> MCP model response -> completed turn OK")
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
-        description="MCP discovery test, with optional safe read-only SSH execute probe."
-    )
-    parser.add_argument(
-        "--probe-execute",
-        action="store_true",
-        help="Call execute on gpu-local using only the fixed read-only hostname command.",
-    )
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--probe-execute", action="store_true")
+    parser.add_argument("--probe-agent", action="store_true")
     args = parser.parse_args()
-    asyncio.run(main(probe_execute=args.probe_execute))
+    asyncio.run(main(args.probe_execute, args.probe_agent))

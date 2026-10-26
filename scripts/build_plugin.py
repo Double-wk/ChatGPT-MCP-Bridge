@@ -17,7 +17,6 @@ PREFIX = "chatgpt-mcp-bridge/"
 PATHS = (
     "plugin.json",
     ".codex-plugin/plugin.json",
-    "skills/remote-ssh/SKILL.md",
 )
 
 
@@ -36,20 +35,26 @@ def build(output: Path, web_url: str | None) -> None:
         portable = {"type": "streamable-http", "url": web_url}
         legacy = {"type": "http", "url": web_url}
     else:
-        portable = {"type": "stdio", "command": "uvx", "args": ["blc-ssh-mcp"]}
+        portable = {"type": "stdio", "command": "chatgpt-mcp-bridge"}
         legacy = dict(portable)
 
     portable_mcp = {
         "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
-        "mcpServers": {"remote_ssh": portable},
+        "mcpServers": {"codex_local": portable},
     }
-    legacy_mcp = {"mcpServers": {"remote_ssh": legacy}}
+    legacy_mcp = {"mcpServers": {"codex_local": legacy}}
     output = Path(output)
     output.parent.mkdir(parents=True, exist_ok=True)
     if output.resolve().is_relative_to(SOURCE.resolve()):
         raise ValueError("Output ZIP must be outside the plugin template")
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for relative in PATHS:
+        paths = list(PATHS)
+        for path in sorted((SOURCE / "skills").rglob("*")):
+            if path.is_file():
+                if not path.resolve().is_relative_to(SOURCE.resolve()):
+                    raise ValueError("Skill resources must remain inside the plugin template")
+                paths.append(path.relative_to(SOURCE).as_posix())
+        for relative in paths:
             archive.write(SOURCE / relative, PREFIX + relative)
         for relative, data in (("mcp.json", portable_mcp), (".mcp.json", legacy_mcp)):
             archive.writestr(PREFIX + relative, json.dumps(data, indent=2) + "\n")

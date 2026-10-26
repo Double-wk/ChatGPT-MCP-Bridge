@@ -1,0 +1,29 @@
+{
+  "version": "0.9.0-alpha",
+  "containerId": "CLI-Network-Test",
+  "containment": "processcontainer",
+  "process": {
+    "commandLine": "python -c \"import socket\n\ndef reaches(ip):\n    try:\n        with socket.create_connection((ip, 443), timeout=5):\n            return True\n    except OSError:\n        return False\n\nallowed = reaches('140.82.114.6')\nblocked = not reaches('1.1.1.1')\nprint('Allowed address reachable:', allowed)\nprint('Other address blocked:', blocked)\nif not (allowed and blocked):\n    raise SystemExit(1)\"",
+    "timeout": 30000
+  },
+  "processContainer": {
+    "capabilities": [
+      "internetClient"
+    ]
+  },
+  "network": {
+    "egress": {
+      "default": "deny",
+      "allow": [
+        {
+          "to": [
+            {
+              "cidr": "140.82.114.6/32"
+            }
+          ],
+          "ports": [{ "protocol": "tcp", "port": 443 }]
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,5 @@
+{
+  "repository": "https://github.com/openai-oss-forks/tokio-tungstenite",
+  "commit": "0e5b2d73aa18dd9f0a50ee9ff199d5aef7594186",
+  "local_patch": "../../../patches/tokio-local-dependency.patch"
+}

@@ -1,0 +1,11 @@
+{
+  "repository": "https://github.com/openai/codex",
+  "tag": "rust-v0.164.0",
+  "commit": "6aaac694803004a63c6f393d153c96d22521a6b9",
+  "license": "Apache-2.0",
+  "included": "codex-rs source workspace plus LICENSE and NOTICE",
+  "local_patches": [
+    "../../patches/codex-close-stdin.patch",
+    "../../patches/codex-local-dependencies.patch"
+  ]
+}

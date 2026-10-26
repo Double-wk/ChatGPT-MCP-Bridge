@@ -1,0 +1,24 @@
+[package]
+name = "chatgpt-mcp-bridge-sandbox"
+version = "2.0.0"
+edition = "2024"
+license = "LGPL-2.0-or-later"
+build = "../../vendor/codex/codex-rs/bwrap/build.rs"
+
+[workspace]
+
+[[bin]]
+name = "bwrap"
+path = "../../vendor/codex/codex-rs/bwrap/src/main.rs"
+
+[dependencies]
+libc = "0.2"
+
+[build-dependencies]
+cc = "1"
+pkg-config = "0.3"
+
+[profile.release]
+opt-level = 1
+debug = 0
+strip = "debuginfo"

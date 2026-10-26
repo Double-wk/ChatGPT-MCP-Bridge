@@ -18,12 +18,12 @@ from unittest.mock import patch
 import pytest
 from starlette.testclient import TestClient
 
-import ssh_mcp.server as server_module
-from ssh_mcp.server import (
+import chatgpt_mcp_bridge.transport.http as server_module
+from chatgpt_mcp_bridge.server import main
+from chatgpt_mcp_bridge.transport.http import (
     _assert_valid_bearer_token,
     _make_bearer_auth_middleware,
     _run_http,
-    main,
 )
 
 
@@ -232,7 +232,9 @@ class TestOptionalAuthMode:
             captured.append(token)
             return _make_dummy_asgi_app()
 
-        with patch("ssh_mcp.server._build_http_app", side_effect=fake_build):
+        with patch(
+            "chatgpt_mcp_bridge.transport.http._build_http_app", side_effect=fake_build
+        ):
             with patch("uvicorn.run"):
                 _run_http()
 
@@ -271,45 +273,45 @@ class TestOptionalAuthMode:
 class TestGracefulShutdown:
     """Green Team H1: lifespan must close SSH connections on shutdown."""
 
-    async def test_lifespan_closes_ssh_manager_on_shutdown(self) -> None:
-        """A simulated shutdown event must invoke SSHManager.close_all().
+    async def test_lifespan_closes_backend_manager_on_shutdown(self) -> None:
+        """A simulated shutdown event must invoke CodexBackend.close_all().
 
         Uses an ``AsyncExitStack`` + the Starlette lifespan context to
         step the ASGI lifespan through ``startup -> shutdown``, capturing
-        whether ``_ssh.close_all()`` was awaited during the shutdown phase.
+        whether ``_backend.close_all()`` was awaited during the shutdown phase.
         """
         from unittest.mock import AsyncMock
 
-        import ssh_mcp.server as server_module
+        import chatgpt_mcp_bridge.transport.http as server_module
 
         # Install a mock SSH manager so we can observe close_all being called
-        mock_ssh = AsyncMock()
-        mock_ssh.close_all = AsyncMock()
-        original_ssh = server_module._ssh
-        server_module._ssh = mock_ssh
+        mock_backend = AsyncMock()
+        mock_backend.close_all = AsyncMock()
+        original_backend = server_module.context.executor
+        server_module.context.executor = mock_backend
         try:
             app = _loopback_app(None)
             # Starlette's TestClient drives the lifespan via context manager
             with TestClient(app):
                 pass  # entering/exiting the context runs startup/shutdown
         finally:
-            server_module._ssh = original_ssh
+            server_module.context.executor = original_backend
 
-        mock_ssh.close_all.assert_awaited_once()
+        mock_backend.close_all.assert_awaited_once()
 
-    async def test_lifespan_shutdown_when_ssh_never_initialized(self) -> None:
-        """If _ssh is None at shutdown, lifespan must not raise."""
-        import ssh_mcp.server as server_module
+    async def test_lifespan_shutdown_when_backend_never_initialized(self) -> None:
+        """If _backend is None at shutdown, lifespan must not raise."""
+        import chatgpt_mcp_bridge.transport.http as server_module
 
-        original_ssh = server_module._ssh
-        server_module._ssh = None
+        original_backend = server_module.context.executor
+        server_module.context.executor = None
         try:
             app = _loopback_app(None)
             # Simply entering and exiting the lifespan should not raise
             with TestClient(app):
                 pass
         finally:
-            server_module._ssh = original_ssh
+            server_module.context.executor = original_backend
 
 
 class TestBuildHttpApp:
@@ -408,6 +410,9 @@ class TestUvicornLogRouting:
         """No handlers on uvicorn loggers means records bubble to root."""
         import logging
 
+        from chatgpt_mcp_bridge.logging_config import _configure_logging
+        _configure_logging()
+
         # After module import, _configure_logging() has attached exactly
         # one handler on root. Uvicorn logs must reach THAT handler.
         root = logging.getLogger()
@@ -434,7 +439,7 @@ class TestUvicornLogRouting:
 
         import structlog.stdlib
 
-        import ssh_mcp.server  # noqa: F401  — trigger _configure_logging()
+        import chatgpt_mcp_bridge.transport.http  # noqa: F401  — trigger _configure_logging()
 
         root = logging.getLogger()
         # There may be a caplog-injected handler alongside ours; find the
@@ -463,7 +468,7 @@ class TestUvicornLogRouting:
         """
         import logging
 
-        import ssh_mcp.server  # noqa: F401
+        import chatgpt_mcp_bridge.transport.http  # noqa: F401
 
         with caplog.at_level(logging.INFO, logger="uvicorn.access"):
             logging.getLogger("uvicorn.access").info(
@@ -701,7 +706,9 @@ class TestBearerAuthR3Hardening:
             captured.append(token)
             return _make_dummy_asgi_app()
 
-        with patch("ssh_mcp.server._build_http_app", side_effect=fake_build):
+        with patch(
+            "chatgpt_mcp_bridge.transport.http._build_http_app", side_effect=fake_build
+        ):
             with patch("uvicorn.run"):
                 _run_http()
 
@@ -973,7 +980,7 @@ class TestLifespanAssertionFires:
         """A missing lifespan_context must trigger a RuntimeError at build time."""
         from unittest.mock import MagicMock
 
-        import ssh_mcp.server as srv
+        import chatgpt_mcp_bridge.transport.http as srv
 
         # Build a fake inner app whose router.lifespan_context is None,
         # simulating a future MCP SDK that restructures its internals.
@@ -1047,7 +1054,9 @@ class TestTokenFile:
             captured.append(token)
             return _make_dummy_asgi_app()
 
-        with patch("ssh_mcp.server._build_http_app", side_effect=fake_build):
+        with patch(
+            "chatgpt_mcp_bridge.transport.http._build_http_app", side_effect=fake_build
+        ):
             with patch("uvicorn.run"):
                 _run_http()
 
@@ -1086,7 +1095,9 @@ class TestTokenFile:
             captured.append(token)
             return _make_dummy_asgi_app()
 
-        with patch("ssh_mcp.server._build_http_app", side_effect=fake_build):
+        with patch(
+            "chatgpt_mcp_bridge.transport.http._build_http_app", side_effect=fake_build
+        ):
             with patch("uvicorn.run"):
                 _run_http()
 
@@ -1115,7 +1126,7 @@ class TestTokenFileValidation:
         p.write_text(f"  {self._TOKEN}\n")
         p.chmod(0o600)
 
-        with caplog.at_level("WARNING", logger="ssh_mcp.server"):
+        with caplog.at_level("WARNING", logger="chatgpt_mcp_bridge.transport.http"):
             assert server_module._read_token_file(str(p)) == self._TOKEN
 
         assert "readable beyond" not in caplog.text
@@ -1137,7 +1148,7 @@ class TestTokenFileValidation:
         p.write_text(self._TOKEN)
         p.chmod(mode)
 
-        with caplog.at_level("WARNING", logger="ssh_mcp.server"):
+        with caplog.at_level("WARNING", logger="chatgpt_mcp_bridge.transport.http"):
             assert server_module._read_token_file(str(p)) == self._TOKEN
 
         assert "readable beyond" in caplog.text
@@ -1179,7 +1190,7 @@ class TestTokenFileValidation:
         p.write_text(self._TOKEN)
         p.chmod(0o611)
 
-        with caplog.at_level("WARNING", logger="ssh_mcp.server"):
+        with caplog.at_level("WARNING", logger="chatgpt_mcp_bridge.transport.http"):
             assert server_module._read_token_file(str(p)) == self._TOKEN
 
         assert "readable beyond" not in caplog.text
@@ -1227,7 +1238,7 @@ class TestTokenFileValidation:
         p.write_text(self._TOKEN)
         p.chmod(0o600)
 
-        with caplog.at_level("WARNING", logger="ssh_mcp.server"):
+        with caplog.at_level("WARNING", logger="chatgpt_mcp_bridge.transport.http"):
             server_module._read_token_file(str(p))
 
         assert "owned by uid" not in caplog.text
@@ -1260,7 +1271,7 @@ class TestTokenFileValidation:
 
         monkeypatch.setattr(server_module.os, "fstat", foreign_uid_fstat)
 
-        with caplog.at_level("WARNING", logger="ssh_mcp.server"):
+        with caplog.at_level("WARNING", logger="chatgpt_mcp_bridge.transport.http"):
             assert server_module._read_token_file(str(p)) == self._TOKEN
 
         assert "owned by uid 4242" in caplog.text, (
@@ -1293,7 +1304,7 @@ class TestTokenFileValidation:
 
         monkeypatch.setattr(server_module.os, "fstat", root_uid_fstat)
 
-        with caplog.at_level("WARNING", logger="ssh_mcp.server"):
+        with caplog.at_level("WARNING", logger="chatgpt_mcp_bridge.transport.http"):
             assert server_module._read_token_file(str(p)) == self._TOKEN
 
         assert "owned by uid" not in caplog.text
@@ -1659,7 +1670,9 @@ class TestTokenFileValidation:
             captured.append(token)
             return _make_dummy_asgi_app()
 
-        with patch("ssh_mcp.server._build_http_app", side_effect=fake_build):
+        with patch(
+            "chatgpt_mcp_bridge.transport.http._build_http_app", side_effect=fake_build
+        ):
             with patch("uvicorn.run"):
                 _run_http()
 

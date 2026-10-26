@@ -1,11 +1,11 @@
 {
   "name": "chatgpt-mcp-bridge",
-  "version": "0.1.0",
-  "description": "Remote development through MCP.",
+  "version": "2.0.0",
+  "description": "Develop projects with the native Codex agent through ChatGPT: persistent tasks, planning, execution, compact and goals.",
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "ChatGPT MCP Bridge",
-    "shortDescription": "Work with remote projects through MCP."
+    "shortDescription": "Work with local projects through Codex tools."
   }
 }

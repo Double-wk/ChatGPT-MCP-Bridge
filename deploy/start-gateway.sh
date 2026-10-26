@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Launch OAuth gateway from the project root and private credentials.
 set -Eeuo pipefail
-ROOT="${SSH_MCP_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-ENV_PREFIX="${SSH_MCP_CONDA_PREFIX:-/mnt/tcm_agent_data/Double/envs/chatgpt-ssh-mcp}"
+ROOT="${MCP_BRIDGE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
+ENV_PREFIX="${MCP_BRIDGE_ENV_PREFIX:-${CODEX_MCP_ENV_PREFIX:-${CONDA_PREFIX:-$ROOT/.venv}}}"
 OAUTH_FILE="${GATEWAY_OAUTH_ENV_FILE:-$HOME/.config/ssh-mcp/github-oauth.env}"
 [[ -f "$OAUTH_FILE" ]] || { echo "Missing private OAuth environment file" >&2; exit 1; }
 [[ -x "$ENV_PREFIX/bin/python" ]] || { echo "Missing Conda Python" >&2; exit 1; }
@@ -16,4 +16,4 @@ set +a
 : "${GATEWAY_PUBLIC_BASE:?Missing public HTTPS base}"
 export CHATGPT_OAUTH_CLIENT_ID="${CHATGPT_OAUTH_CLIENT_ID:-chatgpt-mcp-bridge}"
 export PYTHONPATH="$ROOT"
-exec "$ENV_PREFIX/bin/python" -m uvicorn gateway.app:app --host 127.0.0.1 --port "${GATEWAY_HTTP_PORT:-8200}"
+exec "$ENV_PREFIX/bin/python" -m uvicorn chatgpt_mcp_bridge.gateway.app:app --host 127.0.0.1 --port "${GATEWAY_HTTP_PORT:-8200}"

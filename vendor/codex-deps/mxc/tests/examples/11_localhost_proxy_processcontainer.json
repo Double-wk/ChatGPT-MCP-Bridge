@@ -1,0 +1,27 @@
+{
+  "version": "0.9.0-alpha",
+  "_comment": "Requires an already-running host proxy at http://127.0.0.1:8080 and native ProcessContainer PSEC 1.1 host-loopback support; the identity-less path is for development and testing.",
+  "containerId": "CLI-Proxy-Example",
+  "containment": "processcontainer",
+  "process": {
+    "commandLine": "python -c \"import urllib.request\nfor url in ('https://api.github.com', 'https://httpbin.org/get'):\n    with urllib.request.urlopen(url, timeout=15) as response:\n        print(url, response.status)\"",
+    "timeout": 45000
+  },
+  "processContainer": {
+    "capabilities": [
+      "internetClient"
+    ]
+  },
+  "network": {
+    "egress": {
+      "default": "deny"
+    },
+    "ingress": {
+      "default": "allow",
+      "hostLoopback": "allow"
+    }
+  },
+  "runtimeConfig": {
+    "networkProxy": "http://127.0.0.1:8080"
+  }
+}
