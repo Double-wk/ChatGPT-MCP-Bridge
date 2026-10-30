@@ -107,6 +107,8 @@ class ExecutionRuntime:
                 "NO_PROXY",
             }
             env = {key: value for key, value in os.environ.items() if key in names}
+            if self.network and "SSH_AUTH_SOCK" in os.environ:
+                env["SSH_AUTH_SOCK"] = os.environ["SSH_AUTH_SOCK"]
             env["CODEX_HOME"] = str(self.home)
             env["PATH"] = (
                 str(Path(self.binary).parent) + os.pathsep + env.get("PATH", os.defpath)
@@ -273,13 +275,13 @@ class ExecutionRuntime:
         self,
         argv: list[str],
         cwd: str | None,
-        timeout: int,
+        timeout: int | None,
         tty: bool = False,
         read_only: bool = False,
     ) -> str:
         if not argv or any(not isinstance(arg, str) or "\0" in arg for arg in argv):
             raise ValueError("command must be a non-empty argv array without NUL bytes")
-        if not 1 <= timeout <= 3600:
+        if timeout is not None and not 1 <= timeout <= 3600:
             raise ValueError("timeout must be between 1 and 3600 seconds")
         directory = self.directory(cwd)
         await self.start()
@@ -321,7 +323,7 @@ class ExecutionRuntime:
             if not self.full_access and result.get("sandboxType") in (None, "none"):
                 await self.terminate(process_id)
                 raise RuntimeError("Codex did not activate the requested sandbox")
-            if not session.future.done():
+            if not session.future.done() and timeout is not None:
                 session.timer = asyncio.create_task(self._expire(process_id, timeout))
         except BaseException:
             self.sessions.pop(process_id, None)

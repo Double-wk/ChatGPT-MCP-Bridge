@@ -25,7 +25,7 @@ async def agent(tmp_path, monkeypatch):
     if not binary.is_file():
         pytest.skip("Build the native agent first")
     if (
-        binary.read_bytes()[:4] != b"\x7fELF"
+        binary.read_bytes()[:4] not in (b"\x7fELF", b"\xcf\xfa\xed\xfe")
         and os.getenv("MCP_BRIDGE_ALLOW_PROBE_AGENT") != "1"
     ):
         pytest.skip("Native artifact required")

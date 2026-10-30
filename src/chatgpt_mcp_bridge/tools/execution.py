@@ -1,6 +1,7 @@
 """Direct project execution and file tools."""
 
 import json
+import re
 import shutil
 import sys
 
@@ -79,6 +80,38 @@ async def exec_command(
         raise ValueError("command exceeds 64 KiB")
     backend = _get_backend()
     session_id = await backend.launch(command, working_dir, timeout, tty, read_only)
+    return _json(await backend.poll(session_id, yield_time_ms))
+
+
+@mcp.tool()
+@_mcp_tool
+async def remote_ssh(host: str, yield_time_ms: int = 1000) -> str:
+    """Open a persistent SSH shell using an existing SSH host or user@host.
+
+    Configure the host, key and known_hosts on the Bridge machine first. SSH
+    uses batch authentication and strict host-key checking; passwords and new
+    host keys cannot be entered here. Poll and send commands with write_stdin,
+    and disconnect with terminate_process using the returned session_id. The
+    session lasts until disconnected, the connection drops, or Bridge restarts.
+    Network access must be enabled. Remote commands run with the remote account's
+    permissions; the local sandbox does not restrict their effects.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]{0,254}", host):
+        raise ValueError("host must be an SSH alias or user@hostname")
+    if not 0 <= yield_time_ms <= 10000:
+        raise ValueError("yield_time_ms must be between 0 and 10000")
+    backend = _get_backend()
+    if not backend.network:
+        raise ValueError("SSH requires MCP_BRIDGE_NETWORK_ACCESS=true or full access")
+    ssh = shutil.which("ssh")
+    if not ssh:
+        raise RuntimeError("ssh executable is not installed")
+    session_id = await backend.launch(
+        [ssh, "-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", host],
+        None,
+        None,
+        tty=True,
+    )
     return _json(await backend.poll(session_id, yield_time_ms))
 
 

@@ -113,11 +113,13 @@ agent_command accepts /goal <objective>, /goal, /goal pause|resume|clear, /compa
 
 Task tools: start_agent, list_agent_tasks, get_agent_status, next_model_request, read_model_request, submit_model_response, agent_command, answer_agent_request.
 
-Direct tools: get_environment, execute, exec_command, write_stdin, terminate_process, read_file, write_file, apply_patch.
+Direct tools: get_environment, execute, exec_command, remote_ssh, write_stdin, terminate_process, read_file, write_file, apply_patch. `remote_ssh` opens a persistent SSH shell using the Bridge host's SSH configuration and trusted host keys; use `write_stdin` to send commands and `terminate_process` to disconnect. Network access and noninteractive authentication are required. Remote commands run with the remote account's permissions.
 
 ## Configuration and limits
 
-MCP_BRIDGE_WORKSPACE selects the allowed workspace; MCP_BRIDGE_ENV_PREFIX selects Python; MCP_BRIDGE_STATE_DIR defaults to ~/.local/state/chatgpt-mcp-bridge; MCP_BRIDGE_NETWORK_ACCESS defaults to false. MCP_BRIDGE_HTTP_PORT defaults to 8000. MCP_BRIDGE_HTTP_TOKEN_FILE selects the private HTTP token. Previous variable names and private configuration paths remain compatible. This deployment is single-user; authorized clients share the OS account.
+MCP_BRIDGE_WORKSPACE selects the workspace; MCP_BRIDGE_ENV_PREFIX selects Python; MCP_BRIDGE_STATE_DIR defaults to ~/.local/state/chatgpt-mcp-bridge; MCP_BRIDGE_NETWORK_ACCESS defaults to false in sandboxed mode. MCP_BRIDGE_HTTP_PORT defaults to 8000. MCP_BRIDGE_HTTP_TOKEN_FILE selects the private HTTP token. Previous variable names and private configuration paths remain compatible. This deployment is single-user; authorized clients share the OS account.
+
+The `deploy/run-http.sh` and `deploy/run-stdio.sh` launch scripts default to `MCP_BRIDGE_FULL_ACCESS=true`. This disables the OS sandbox and enables network access, so commands run with the operating system account's permissions. The workspace still limits working directory selection but is not a filesystem boundary. Set `MCP_BRIDGE_FULL_ACCESS=false` before launching to use the sandbox. Invoking `chatgpt-mcp-bridge` directly defaults to sandboxed mode when the variable is unset.
 
 - Codex requires ChatGPT to keep servicing requests. MCP cannot wake a closed or completed webpage conversation or guarantee unattended infinite execution.
 - Native history persists independently from webpage history. /compact only compacts native task history.

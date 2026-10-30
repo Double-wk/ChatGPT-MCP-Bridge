@@ -15,7 +15,7 @@
 
 ChatGPT 负责理解需求并生成回答或工具调用，Codex 原生引擎负责组织任务、执行工具和维护开发历史，Bridge 通过 MCP 在两者之间传递请求与结果。原生引擎由仓库内的 Codex App Server 和 core 源码编译。
 
-将 Bridge 部署在需要操作的主机上，即可通过 MCP 访问该主机上的项目。目前已验证 Linux 服务器部署；macOS / Windows 原生部署尚未验证。
+将 Bridge 部署在需要操作的主机上，即可通过 MCP 访问该主机上的项目。Linux 服务器和 macOS Apple Silicon 本机部署已验证；Windows 原生部署尚不支持。
 
 本项目不会增加或恢复 Codex 额度。实际可用能力受 ChatGPT 账号权限、使用限制和部署环境影响，也不等同于 Codex 产品的完整功能与性能。
 
@@ -63,12 +63,12 @@ flowchart LR
 
 > 为这个任务创建 /goal，完成修复并验证；如果当前会话中断，下次继续同一个任务。
 
-### 新部署：Linux
+### 新部署：Linux / macOS
 
-先准备 Python 3.11+、Rust 1.99.1、C 编译器、pkg-config、libcap 开发文件和 OpenSSL 开发文件。以下命令从仓库根目录执行：
+先准备 Python 3.11+、Rust 1.99.1 和 C 编译器。Linux 还需 pkg-config、libcap 和 OpenSSL 开发文件；macOS 需要 Xcode Command Line Tools。安装脚本按系统构建对应的原生组件：Linux 使用 Bubblewrap，macOS 使用 Codex 的 Seatbelt 沙箱。以下命令从仓库根目录执行：
 
 
-运行沙箱还需要系统允许创建非特权用户与网络命名空间。启用 AppArmor 的 Ubuntu 环境可能需要为打包的 Bubblewrap 配置相应策略，参见 [Ubuntu 的命名空间说明](https://discourse.ubuntu.com/t/ubuntu-24-04-lts-noble-numbat-release-notes/39890)。可以先运行 `unshare --user --map-root-user --net /bin/true` 检查这项前置条件。
+Linux 沙箱还需要系统允许创建非特权用户与网络命名空间。启用 AppArmor 的 Ubuntu 环境可能需要为打包的 Bubblewrap 配置相应策略，参见 [Ubuntu 的命名空间说明](https://discourse.ubuntu.com/t/ubuntu-24-04-lts-noble-numbat-release-notes/39890)。可以先运行 `unshare --user --map-root-user --net /bin/true` 检查这项前置条件。
 ```bash
 python3 -m venv .venv
 export MCP_BRIDGE_ENV_PREFIX="$PWD/.venv"
@@ -79,13 +79,19 @@ bash deploy/run-http.sh
 
 安装脚本编译仓库内的原生组件、安装 Python 包，并生成本机私有令牌。HTTP 服务默认监听 `127.0.0.1:8000`。
 
+通过 `deploy/run-http.sh` 或 `deploy/run-stdio.sh` 启动时，默认开启 full access（`MCP_BRIDGE_FULL_ACCESS=true`）。此模式关闭操作系统沙箱，命令可使用运行 Bridge 的系统账号权限访问文件和网络；获准连接的客户端共享该账号权限。工作目录仍受 `MCP_BRIDGE_WORKSPACE` 限制，但这不等于文件访问边界。需要沙箱时，在启动前设置 `export MCP_BRIDGE_FULL_ACCESS=false`。直接运行 `chatgpt-mcp-bridge` 命令时，未设置该变量则默认使用沙箱。
+
+如需分发安装包，在各自的目标系统和 CPU 架构上分别构建：先执行上述 `deploy/install.sh`，再运行 `.venv/bin/python -m pip wheel --no-deps --no-build-isolation . -w dist`。生成的 wheel 文件名包含平台和架构；macOS 和 Linux 的 wheel 不能互用，不同 CPU 架构也需要分别构建。构建 wheel 前需要在环境中安装 `hatchling`。本项目不会自动下载其他系统的预编译 Bridge 程序。
+
+GitHub Actions 的验证工作流分别生成 `bridge-linux-wheel` 和 `bridge-macos-wheel` 构建产物；对应任务成功后，可从该次运行的 Artifacts 下载。下载前请检查 wheel 文件名中的操作系统和 CPU 架构是否匹配本机。
+
 在另一个终端验证：
 
 ```bash
 .venv/bin/python deploy/doctor-mcp.py --probe-execute --probe-agent
 ```
 
-诊断脚本会验证认证、16 个工具、执行功能和一次原生模型请求回传。模型回传探针使用预设测试回答，不代表 GPT 网页端自动持续运行已经得到保证。
+诊断脚本会验证认证、17 个工具、执行功能和一次原生模型请求回传。模型回传探针使用预设测试回答，不代表 GPT 网页端自动持续运行已经得到保证。
 
 如使用现有 Conda 环境，激活 `chatgpt-mcp-bridge`，并把 `MCP_BRIDGE_ENV_PREFIX` 指向该环境路径即可；不要重复创建环境。
 
@@ -93,7 +99,7 @@ bash deploy/run-http.sh
 
 将 MCP 服务通过带认证的 HTTPS 入口提供给 ChatGPT。仓库内 `gateway/` 模块负责 OAuth 与代理，`deploy/start-gateway.sh` 读取私有 OAuth 配置；`cloudflared/` 提供现有部署使用的隧道启动脚本。
 
-网关部署需要 GitHub OAuth 应用、允许访问的账号 ID 和公开 HTTPS 基址。具体环境变量及读取位置见 [网关启动脚本](deploy/start-gateway.sh)。凭据保存在服务器私有配置中。
+网关部署需要 GitHub OAuth 应用、允许访问的账号 ID 和公开 HTTPS 基址。具体环境变量及读取位置见 [网关启动脚本](deploy/start-gateway.sh)。凭据保存在服务器私有配置中。仓库附带的 cloudflared 仅适用于 Linux x86-64；macOS 和其他架构需安装对应平台的 cloudflared，或通过 `CLOUDFLARED_BIN` 指定其路径。
 
 在账号支持的自定义 MCP / 开发者连接入口中添加 `https://your-domain.example/mcp`，完成认证，然后在对话中启用它。使用设置和可用入口以 [OpenAI 官方连接说明](https://developers.openai.com/plugins/deploy/connect-chatgpt) 为准。
 
@@ -129,9 +135,11 @@ ZIP 提供插件声明和任务工作流程说明，不包含服务器程序或�
 | 工具组 | MCP 工具 |
 | --- | --- |
 | 任务流程 | start_agent、list_agent_tasks、get_agent_status、next_model_request、read_model_request、submit_model_response、agent_command、answer_agent_request |
-| 执行和文件 | get_environment、execute、exec_command、write_stdin、terminate_process、read_file、write_file、apply_patch |
+| 执行和文件 | get_environment、execute、exec_command、remote_ssh、write_stdin、terminate_process、read_file、write_file、apply_patch |
 
 开发任务优先通过任务流程工具推进；执行和文件工具适合明确的单步操作与诊断。
+
+`remote_ssh` 使用 Bridge 主机已有的 SSH 配置连接远端，返回的 `session_id` 可用 `write_stdin` 发送命令和读取输出，用 `terminate_process` 断开。连接保持到主动断开、网络中断或服务重启；应先在运行 Bridge 的机器上配置免交互认证和可信主机密钥。此工具要求启用网络，远端命令使用远端账号权限，不受本机沙箱限制。
 
 | 路径 | 职责 |
 | --- | --- |
@@ -156,6 +164,7 @@ ZIP 提供插件声明和任务工作流程说明，不包含服务器程序或�
 | `MCP_BRIDGE_ENV_PREFIX` | Python 环境路径 |
 | `MCP_BRIDGE_STATE_DIR` | 持久状态目录，默认 `~/.local/state/chatgpt-mcp-bridge` |
 | `MCP_BRIDGE_NETWORK_ACCESS` | 执行环境网络权限，默认关闭 |
+| `MCP_BRIDGE_FULL_ACCESS` | 启动脚本默认 `true`，关闭系统沙箱并启用网络；设为 `false` 使用沙箱。直接运行程序时默认为 `false` |
 | `MCP_BRIDGE_HTTP_PORT` | MCP HTTP 监听端口，默认 8000 |
 | `MCP_BRIDGE_HTTP_TOKEN_FILE` | MCP HTTP 私有令牌文件 |
 
@@ -169,6 +178,6 @@ ZIP 提供插件声明和任务工作流程说明，不包含服务器程序或�
 - 桥接层按请求大小估算 token 用量，用于原生计量和压缩触发，不代表网页端实际用量或计费。
 - 原生规划、执行、文件修改、测试、压缩、目标续跑、暂停恢复和沙箱限制已通过服务器测试。部署时通过 176 项测试，并验证 MCP 和网关的原生请求回传。
 - 服务器测试与 GitHub Actions 是不同的验证环境；仓库自动检查状态以对应提交的 Actions 结果为准。
-- 尚未验证 macOS / Windows 原生部署，也未进行与独立 Codex 同模型条件下的性能对比。
+- macOS 验证限于 Apple Silicon 本机执行和原生模型回传；尚未进行与独立 Codex 同模型条件下的性能对比。
 
 进一步阅读：[架构说明](docs/architecture.md) · [第三方声明](THIRD_PARTY_NOTICES.md)。

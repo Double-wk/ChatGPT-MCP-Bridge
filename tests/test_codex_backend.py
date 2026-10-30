@@ -218,7 +218,7 @@ async def test_file_tools_and_codex_patch(backend, monkeypatch):
     assert not (backend.workspace.parent / "escaped.txt").exists()
 
 
-async def test_mcp_tool_catalog_has_no_ssh():
+async def test_mcp_tool_catalog():
     import chatgpt_mcp_bridge.tools.execution as server
 
     tools = await server.mcp.list_tools()
@@ -227,6 +227,7 @@ async def test_mcp_tool_catalog_has_no_ssh():
         "get_environment",
         "execute",
         "exec_command",
+        "remote_ssh",
         "write_stdin",
         "terminate_process",
         "read_file",
@@ -235,3 +236,38 @@ async def test_mcp_tool_catalog_has_no_ssh():
     }
     for tool in tools:
         assert "server" not in tool.input_schema.get("properties", {})
+
+
+async def test_remote_ssh_persistent_session(backend, tmp_path, monkeypatch):
+    import chatgpt_mcp_bridge.tools.execution as server
+
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text("#!/bin/sh\nprintf 'connected\\n'\nwhile IFS= read -r line; do printf 'reply:%s\\n' \"$line\"; done\n")
+    fake_ssh.chmod(0o755)
+    backend.full_access = True
+    backend.network = True
+    monkeypatch.setattr(server, "_get_backend", lambda: backend)
+    monkeypatch.setattr(server.shutil, "which", lambda name: str(fake_ssh))
+    result = json.loads(await server.remote_ssh.__wrapped__("test-host", 500))
+    session_id = result["session_id"]
+    assert result["running"] and session_id
+    assert backend.sessions[session_id].timer is None
+    await backend.write(session_id, "first\n", False)
+    first = await backend.poll(session_id, 500)
+    assert "reply:first" in first["stdout"]
+    await backend.write(session_id, "second\n", False)
+    second = await backend.poll(session_id, 500)
+    assert "reply:second" in second["stdout"]
+    await backend.terminate(session_id)
+    result = await backend.poll(session_id, 5000)
+    assert not result["running"]
+
+
+async def test_remote_ssh_rejects_options_and_requires_network(backend, monkeypatch):
+    import chatgpt_mcp_bridge.tools.execution as server
+
+    monkeypatch.setattr(server, "_get_backend", lambda: backend)
+    with pytest.raises(ValueError, match="SSH alias"):
+        await server.remote_ssh.__wrapped__("-oProxyCommand=bad")
+    with pytest.raises(ValueError, match="requires"):
+        await server.remote_ssh.__wrapped__("test-host")

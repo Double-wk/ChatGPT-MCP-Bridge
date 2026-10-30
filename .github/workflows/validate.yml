@@ -66,3 +66,37 @@ jobs:
         run: python -m pip wheel --no-deps --no-build-isolation . -w dist
       - name: Build desktop plugin
         run: python scripts/build_plugin.py --output dist/chatgpt-mcp-bridge.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-linux-wheel
+          path: dist/*.whl
+          if-no-files-found: error
+
+  macos-test-and-package:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.99.1'
+      - name: Build embedded Codex runtime
+        run: bash deploy/build-runtime.sh
+      - name: Install bridge and test dependencies
+        run: python -m pip install -e '.[dev,gateway]'
+      - name: Check shell and Python source
+        run: |
+          bash -n deploy/*.sh cloudflared/run-oauth-tunnel.sh
+          python -m ruff check src tests
+          python -m compileall -q src scripts deploy tests
+      - name: Run bridge and native execution tests
+        run: python -m pytest -q
+      - name: Build Python wheel
+        run: python -m pip wheel --no-deps --no-build-isolation . -w dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bridge-macos-wheel
+          path: dist/*.whl
+          if-no-files-found: error
