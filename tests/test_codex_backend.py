@@ -242,15 +242,21 @@ async def test_remote_ssh_persistent_session(backend, tmp_path, monkeypatch):
     import chatgpt_mcp_bridge.tools.execution as server
 
     fake_ssh = tmp_path / "ssh"
-    fake_ssh.write_text("#!/bin/sh\nprintf 'connected\\n'\nwhile IFS= read -r line; do printf 'reply:%s\\n' \"$line\"; done\n")
+    fake_ssh.write_text("#!/bin/sh\nprintf 'connected %s\\n' \"$*\"\nwhile IFS= read -r line; do printf 'reply:%s\\n' \"$line\"; done\n")
     fake_ssh.chmod(0o755)
     backend.full_access = True
     backend.network = True
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
     monkeypatch.setattr(server.shutil, "which", lambda name: str(fake_ssh))
-    result = json.loads(await server.remote_ssh.__wrapped__("test-host", 500))
+    result = json.loads(await server.remote_ssh.__wrapped__("user@test-host", 2222, 500))
     session_id = result["session_id"]
     assert result["running"] and session_id
+    output = result["stdout"]
+    for _ in range(5):
+        if "-p 2222 user@test-host" in output:
+            break
+        output += (await backend.poll(session_id, 500))["stdout"]
+    assert "-p 2222 user@test-host" in output
     assert backend.sessions[session_id].timer is None
     await backend.write(session_id, "first\n", False)
     first = await backend.poll(session_id, 500)
@@ -269,5 +275,7 @@ async def test_remote_ssh_rejects_options_and_requires_network(backend, monkeypa
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
     with pytest.raises(ValueError, match="SSH alias"):
         await server.remote_ssh.__wrapped__("-oProxyCommand=bad")
+    with pytest.raises(ValueError, match="port"):
+        await server.remote_ssh.__wrapped__("test-host", 65536)
     with pytest.raises(ValueError, match="requires"):
         await server.remote_ssh.__wrapped__("test-host")

@@ -85,10 +85,11 @@ async def exec_command(
 
 @mcp.tool()
 @_mcp_tool
-async def remote_ssh(host: str, yield_time_ms: int = 1000) -> str:
+async def remote_ssh(host: str, port: int | None = None, yield_time_ms: int = 1000) -> str:
     """Open a persistent SSH shell using an existing SSH host or user@host.
 
-    Configure the host, key and known_hosts on the Bridge machine first. SSH
+    host is an SSH alias or user@hostname; port is optional and defaults to SSH
+    configuration or port 22. Configure the key and known_hosts on the Bridge machine first. SSH
     uses batch authentication and strict host-key checking; passwords and new
     host keys cannot be entered here. Poll and send commands with write_stdin,
     and disconnect with terminate_process using the returned session_id. The
@@ -98,6 +99,8 @@ async def remote_ssh(host: str, yield_time_ms: int = 1000) -> str:
     """
     if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]{0,254}", host):
         raise ValueError("host must be an SSH alias or user@hostname")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("port must be between 1 and 65535")
     if not 0 <= yield_time_ms <= 10000:
         raise ValueError("yield_time_ms must be between 0 and 10000")
     backend = _get_backend()
@@ -106,8 +109,12 @@ async def remote_ssh(host: str, yield_time_ms: int = 1000) -> str:
     ssh = shutil.which("ssh")
     if not ssh:
         raise RuntimeError("ssh executable is not installed")
+    argv = [ssh, "-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+    if port is not None:
+        argv.extend(["-p", str(port)])
+    argv.append(host)
     session_id = await backend.launch(
-        [ssh, "-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", host],
+        argv,
         None,
         None,
         tty=True,
