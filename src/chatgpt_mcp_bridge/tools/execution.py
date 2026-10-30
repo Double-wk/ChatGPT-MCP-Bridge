@@ -85,13 +85,20 @@ async def exec_command(
 
 @mcp.tool()
 @_mcp_tool
-async def remote_ssh(host: str, port: int | None = None, yield_time_ms: int = 1000) -> str:
+async def remote_ssh(
+    host: str,
+    port: int | None = None,
+    authentication: str = "key",
+    yield_time_ms: int = 1000,
+) -> str:
     """Open a persistent SSH shell using an existing SSH host or user@host.
 
     host is an SSH alias or user@hostname; port is optional and defaults to SSH
-    configuration or port 22. Configure the key and known_hosts on the Bridge machine first. SSH
-    uses batch authentication and strict host-key checking; passwords and new
-    host keys cannot be entered here. Poll and send commands with write_stdin,
+    configuration or port 22. authentication is 'key' or 'password'. Configure
+    known_hosts on the Bridge machine first. Key mode uses batch authentication;
+    password mode prompts on the terminal and accepts input via write_stdin.
+    Passwords passed to tools may be recorded in conversation or tool history.
+    Host-key verification remains strict. Poll and send commands with write_stdin,
     and disconnect with terminate_process using the returned session_id. The
     session lasts until disconnected, the connection drops, or Bridge restarts.
     Network access must be enabled. Remote commands run with the remote account's
@@ -101,6 +108,8 @@ async def remote_ssh(host: str, port: int | None = None, yield_time_ms: int = 10
         raise ValueError("host must be an SSH alias or user@hostname")
     if port is not None and not 1 <= port <= 65535:
         raise ValueError("port must be between 1 and 65535")
+    if authentication not in ("key", "password"):
+        raise ValueError("authentication must be 'key' or 'password'")
     if not 0 <= yield_time_ms <= 10000:
         raise ValueError("yield_time_ms must be between 0 and 10000")
     backend = _get_backend()
@@ -109,7 +118,11 @@ async def remote_ssh(host: str, port: int | None = None, yield_time_ms: int = 10
     ssh = shutil.which("ssh")
     if not ssh:
         raise RuntimeError("ssh executable is not installed")
-    argv = [ssh, "-tt", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes"]
+    argv = [ssh, "-tt", "-o", "StrictHostKeyChecking=yes"]
+    if authentication == "key":
+        argv.extend(["-o", "BatchMode=yes"])
+    else:
+        argv.extend(["-o", "BatchMode=no", "-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no"])
     if port is not None:
         argv.extend(["-p", str(port)])
     argv.append(host)

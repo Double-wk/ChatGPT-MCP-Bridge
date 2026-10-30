@@ -113,7 +113,7 @@ agent_command accepts /goal <objective>, /goal, /goal pause|resume|clear, /compa
 
 Task tools: start_agent, list_agent_tasks, get_agent_status, next_model_request, read_model_request, submit_model_response, agent_command, answer_agent_request.
 
-Direct tools: get_environment, execute, exec_command, remote_ssh, write_stdin, terminate_process, read_file, write_file, apply_patch. `remote_ssh` opens a persistent SSH shell using the Bridge host's SSH configuration and trusted host keys; use `write_stdin` to send commands and `terminate_process` to disconnect. Network access and noninteractive authentication are required. Remote commands run with the remote account's permissions.
+Direct tools: get_environment, execute, exec_command, remote_ssh, write_stdin, terminate_process, read_file, write_file, apply_patch. `remote_ssh` opens a persistent SSH shell using the Bridge host's SSH configuration and trusted host keys; use `write_stdin` to send commands and `terminate_process` to disconnect. Network access is required. Key authentication is the default; password authentication can be selected, but passwords sent through tool calls may be recorded in conversation or tool history. Remote commands run with the remote account's permissions.
 
 ## Configuration and limits
 

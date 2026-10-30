@@ -248,7 +248,7 @@ async def test_remote_ssh_persistent_session(backend, tmp_path, monkeypatch):
     backend.network = True
     monkeypatch.setattr(server, "_get_backend", lambda: backend)
     monkeypatch.setattr(server.shutil, "which", lambda name: str(fake_ssh))
-    result = json.loads(await server.remote_ssh.__wrapped__("user@test-host", 2222, 500))
+    result = json.loads(await server.remote_ssh.__wrapped__("user@test-host", 2222, "password", 500))
     session_id = result["session_id"]
     assert result["running"] and session_id
     output = result["stdout"]
@@ -257,6 +257,7 @@ async def test_remote_ssh_persistent_session(backend, tmp_path, monkeypatch):
             break
         output += (await backend.poll(session_id, 500))["stdout"]
     assert "-p 2222 user@test-host" in output
+    assert "BatchMode=no" in output
     assert backend.sessions[session_id].timer is None
     await backend.write(session_id, "first\n", False)
     first = await backend.poll(session_id, 500)
@@ -277,5 +278,37 @@ async def test_remote_ssh_rejects_options_and_requires_network(backend, monkeypa
         await server.remote_ssh.__wrapped__("-oProxyCommand=bad")
     with pytest.raises(ValueError, match="port"):
         await server.remote_ssh.__wrapped__("test-host", 65536)
+    with pytest.raises(ValueError, match="authentication"):
+        await server.remote_ssh.__wrapped__("test-host", authentication="invalid")
     with pytest.raises(ValueError, match="requires"):
         await server.remote_ssh.__wrapped__("test-host")
+
+
+async def test_remote_ssh_password_prompt(backend, tmp_path, monkeypatch):
+    import chatgpt_mcp_bridge.tools.execution as server
+
+    fake_ssh = tmp_path / "ssh"
+    fake_ssh.write_text(
+        "#!/bin/sh\nstty -echo\nprintf 'Password: '\nIFS= read -r password\n"
+        "stty echo\n[ \"$password\" = 'test-only' ] || exit 1\n"
+        "printf 'authenticated\\n'\nread -r command\nprintf 'done:%s\\n' \"$command\"\n"
+    )
+    fake_ssh.chmod(0o755)
+    backend.full_access = True
+    backend.network = True
+    monkeypatch.setattr(server, "_get_backend", lambda: backend)
+    monkeypatch.setattr(server.shutil, "which", lambda name: str(fake_ssh))
+    result = json.loads(await server.remote_ssh.__wrapped__("user@test-host", authentication="password", yield_time_ms=500))
+    session_id = result["session_id"]
+    output = result["stdout"]
+    for _ in range(5):
+        if "Password:" in output:
+            break
+        output += (await backend.poll(session_id, 500))["stdout"]
+    assert "Password:" in output
+    await backend.write(session_id, "test-only\n", False)
+    output = (await backend.poll(session_id, 500))["stdout"]
+    assert "authenticated" in output and "test-only" not in output
+    await backend.write(session_id, "hello\n", False)
+    output = await backend.poll(session_id, 5000)
+    assert "done:hello" in output["stdout"]
