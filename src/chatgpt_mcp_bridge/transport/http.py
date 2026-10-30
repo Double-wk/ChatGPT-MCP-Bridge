@@ -342,7 +342,9 @@ def _run_http() -> None:
     import ipaddress
 
     try:
-        is_localhost = ipaddress.ip_address(host).is_loopback
+        address = ipaddress.ip_address(host)
+        mapped = address.ipv4_mapped if isinstance(address, ipaddress.IPv6Address) else None
+        is_localhost = mapped.is_loopback if mapped is not None else address.is_loopback
     except ValueError:
         is_localhost = host.lower() in {"localhost"}
 
