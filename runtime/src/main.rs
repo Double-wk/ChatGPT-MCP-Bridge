@@ -12,7 +12,10 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if args.get(1).map(String::as_str) == Some("--version") {
-        println!("chatgpt-mcp-bridge-runtime 0.3.0 (Codex rust-v0.164.0)");
+        println!(
+            "chatgpt-mcp-bridge-runtime {} (Codex rust-v0.164.0)",
+            env!("CARGO_PKG_VERSION")
+        );
         return Ok(());
     }
     if args.get(1).map(String::as_str) == Some("--sandbox-context") {

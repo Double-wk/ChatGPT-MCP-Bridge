@@ -1,6 +1,6 @@
 [package]
 name = "chatgpt-mcp-bridge-sandbox"
-version = "2.0.0"
+version = "3.0.0"
 edition = "2024"
 license = "LGPL-2.0-or-later"
 build = "../../vendor/codex/codex-rs/bwrap/build.rs"

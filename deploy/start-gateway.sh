@@ -2,7 +2,8 @@
 # Launch OAuth gateway from the project root and private credentials.
 set -Eeuo pipefail
 ROOT="${MCP_BRIDGE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
-ENV_PREFIX="${MCP_BRIDGE_ENV_PREFIX:-${CODEX_MCP_ENV_PREFIX:-${CONDA_PREFIX:-$ROOT/.venv}}}"
+ENV_PREFIX="${MCP_BRIDGE_ENV_PREFIX:-${CODEX_MCP_ENV_PREFIX:-${CONDA_PREFIX:-}}}"
+[[ -n "$ENV_PREFIX" ]] || { echo 'Activate Conda first: conda activate chatgpt-mcp-bridge' >&2; exit 1; }
 OAUTH_FILE="${GATEWAY_OAUTH_ENV_FILE:-$HOME/.config/ssh-mcp/github-oauth.env}"
 [[ -f "$OAUTH_FILE" ]] || { echo "Missing private OAuth environment file" >&2; exit 1; }
 [[ -x "$ENV_PREFIX/bin/python" ]] || { echo "Missing Conda Python" >&2; exit 1; }

@@ -68,6 +68,9 @@ class ExecutionRuntime:
         self.next_id = 0
         self.output_cap = 65536
         self.network = getenv("CODEX_MCP_NETWORK_ACCESS", "false").lower() == "true"
+        self.full_access = os.getenv("MCP_BRIDGE_FULL_ACCESS", "false").lower() == "true"
+        if self.full_access:
+            self.network = True
         self.sandboxes: dict[bool, dict] = {}
 
     def directory(self, path: str | None) -> str:
@@ -104,6 +107,8 @@ class ExecutionRuntime:
                 "NO_PROXY",
             }
             env = {key: value for key, value in os.environ.items() if key in names}
+            if self.network and "SSH_AUTH_SOCK" in os.environ:
+                env["SSH_AUTH_SOCK"] = os.environ["SSH_AUTH_SOCK"]
             env["CODEX_HOME"] = str(self.home)
             env["PATH"] = (
                 str(Path(self.binary).parent) + os.pathsep + env.get("PATH", os.defpath)
@@ -125,6 +130,8 @@ class ExecutionRuntime:
                         "Embedded Codex sandbox policy initialization failed"
                     )
                 self.sandboxes[read_only] = json.loads(stdout)
+                if self.full_access:
+                    self.sandboxes[read_only]["permissions"] = {"type": "disabled"}
             self.process = await asyncio.create_subprocess_exec(
                 self.binary,
                 cwd=str(self.workspace),
@@ -268,13 +275,13 @@ class ExecutionRuntime:
         self,
         argv: list[str],
         cwd: str | None,
-        timeout: int,
+        timeout: int | None,
         tty: bool = False,
         read_only: bool = False,
     ) -> str:
         if not argv or any(not isinstance(arg, str) or "\0" in arg for arg in argv):
             raise ValueError("command must be a non-empty argv array without NUL bytes")
-        if not 1 <= timeout <= 3600:
+        if timeout is not None and not 1 <= timeout <= 3600:
             raise ValueError("timeout must be between 1 and 3600 seconds")
         directory = self.directory(cwd)
         await self.start()
@@ -313,10 +320,10 @@ class ExecutionRuntime:
                     "sandbox": self.sandboxes[read_only],
                 },
             )
-            if result.get("sandboxType") in (None, "none"):
+            if not self.full_access and result.get("sandboxType") in (None, "none"):
                 await self.terminate(process_id)
                 raise RuntimeError("Codex did not activate the requested sandbox")
-            if not session.future.done():
+            if not session.future.done() and timeout is not None:
                 session.timer = asyncio.create_task(self._expire(process_id, timeout))
         except BaseException:
             self.sessions.pop(process_id, None)

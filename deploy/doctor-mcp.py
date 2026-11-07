@@ -44,6 +44,7 @@ async def main(execute=False, agent=False):
                     "get_environment",
                     "execute",
                     "exec_command",
+                    "remote_ssh",
                     "write_stdin",
                     "terminate_process",
                     "read_file",
@@ -60,7 +61,7 @@ async def main(execute=False, agent=False):
                 }
                 assert names == expected, sorted(names)
                 data(await session.call_tool("get_environment", arguments={}))
-                print("Authenticated MCP discovery: 16 tools OK")
+                print("Authenticated MCP discovery: 17 tools OK")
                 if execute:
                     result = data(
                         await session.call_tool(

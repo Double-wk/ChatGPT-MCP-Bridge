@@ -2,6 +2,7 @@ import base64
 import hashlib
 import hmac
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -54,7 +55,37 @@ def challenge(verifier):
     return b64u(hashlib.sha256(verifier.encode()).digest())
 
 
-def valid_gateway_auth(authorization: str) -> bool:
+def public_base(request):
+    return os.getenv("GATEWAY_PUBLIC_BASE", str(request.base_url)).rstrip("/")
+
+
+def protected_resource(request):
+    return public_base(request) + "/mcp"
+
+
+def requested_resource(parameters, request, required=True):
+    values = parameters.getlist("resource")
+    expected = protected_resource(request)
+    if not values and not required:
+        return expected
+    return expected if values == [expected] else None
+
+
+def known_client(client_id):
+    return bool(client_id) and (
+        client_id == CHATGPT_CLIENT or TOKEN_STORE.known_client(client_id)
+    )
+
+
+def valid_client_redirect(client_id, redirect_uri):
+    if not valid_chatgpt_redirect(redirect_uri):
+        return False
+    return client_id == CHATGPT_CLIENT or TOKEN_STORE.client_redirect_allowed(
+        client_id, redirect_uri
+    )
+
+
+def valid_gateway_auth(authorization: str, resource: str | None = None) -> bool:
     if not authorization.startswith("Bearer "):
         return False
     supplied = authorization[7:]
@@ -62,7 +93,7 @@ def valid_gateway_auth(authorization: str) -> bool:
         return False
     if EXT.is_file() and hmac.compare_digest(supplied, read(EXT)):
         return True
-    return TOKEN_STORE.authorized(supplied)
+    return TOKEN_STORE.authorized(supplied, resource)
 
 
 async def health(request):
@@ -70,12 +101,13 @@ async def health(request):
 
 
 async def metadata(request):
-    base = os.getenv("GATEWAY_PUBLIC_BASE", str(request.base_url).rstrip("/"))
+    base = public_base(request)
     return JSONResponse(
         {
             "issuer": base,
             "authorization_endpoint": base + "/oauth/authorize",
             "token_endpoint": base + "/oauth/token",
+            "registration_endpoint": base + "/register",
             "code_challenge_methods_supported": ["S256"],
             "response_types_supported": ["code"],
             "grant_types_supported": ["authorization_code", "refresh_token"],
@@ -86,8 +118,14 @@ async def metadata(request):
 
 
 async def resource(request):
-    base = os.getenv("GATEWAY_PUBLIC_BASE", str(request.base_url).rstrip("/"))
-    return JSONResponse({"resource": base + "/mcp", "authorization_servers": [base]})
+    base = public_base(request)
+    return JSONResponse(
+        {
+            "resource": base + "/mcp",
+            "authorization_servers": [base],
+            "scopes_supported": ["mcp", "offline_access"],
+        }
+    )
 
 
 async def authorize(request):
@@ -114,9 +152,14 @@ async def token_endpoint(request):
     grant = form.get("grant_type")
     if grant == "refresh_token":
         # This is a public OAuth client using PKCE, not a client secret.
-        if form.get("client_id") != CHATGPT_CLIENT:
+        if not known_client(form.get("client_id")):
             return JSONResponse({"error": "invalid_client"}, status_code=401)
-        result = TOKEN_STORE.refresh(form.get("refresh_token", ""), CHATGPT_CLIENT)
+        resource = requested_resource(form, request, required=False)
+        if resource is None:
+            return JSONResponse({"error": "invalid_target"}, status_code=400)
+        result = TOKEN_STORE.refresh(
+            form.get("refresh_token", ""), form["client_id"], resource
+        )
         if not result:
             return JSONResponse({"error": "invalid_grant"}, status_code=400)
         return JSONResponse(
@@ -127,21 +170,27 @@ async def token_endpoint(request):
     code = form.get("code")
     verifier = form.get("code_verifier")
     client = form.get("client_id")
+    resource = requested_resource(form, request)
+    if resource is None:
+        return JSONResponse({"error": "invalid_target"}, status_code=400)
     item = codes.get(code) if code else None
     if (
         not item
         or item["expires"] < time.time()
         or client != item["client_id"]
-        or client != CHATGPT_CLIENT
+        or not known_client(client)
         or form.get("redirect_uri") != item["redirect_uri"]
+        or not valid_client_redirect(client, item["redirect_uri"])
+        or item.get("resource") != resource
         or not verifier
+        or not re.fullmatch(r"[A-Za-z0-9._~-]{43,128}", verifier)
         or not hmac.compare_digest(challenge(verifier), item["challenge"])
     ):
         return JSONResponse({"error": "invalid_grant"}, status_code=400)
     # Consume authorization codes only after validating all parameters.
     codes.pop(code, None)
     return JSONResponse(
-        TOKEN_STORE.issue(client),
+        TOKEN_STORE.issue(client, resource),
         headers={"Cache-Control": "no-store", "Pragma": "no-cache"},
     )
 
@@ -160,17 +209,36 @@ async def register(request):
     try:
         data = await request.json()
     except Exception:
-        data = {}
-    client_id = "chatgpt-" + secrets.token_urlsafe(12)
+        return JSONResponse({"error": "invalid_client_metadata"}, status_code=400)
+    if not isinstance(data, dict):
+        return JSONResponse({"error": "invalid_client_metadata"}, status_code=400)
+    redirects = data.get("redirect_uris")
+    grants = data.get("grant_types", ["authorization_code", "refresh_token"])
+    if (
+        not isinstance(redirects, list)
+        or not 1 <= len(redirects) <= 8
+        or any(
+            not isinstance(uri, str) or not valid_chatgpt_redirect(uri)
+            for uri in redirects
+        )
+        or data.get("token_endpoint_auth_method", "none") != "none"
+        or data.get("response_types", ["code"]) != ["code"]
+        or not isinstance(grants, list)
+        or "authorization_code" not in grants
+        or any(grant not in ("authorization_code", "refresh_token") for grant in grants)
+    ):
+        return JSONResponse({"error": "invalid_client_metadata"}, status_code=400)
+    registration = TOKEN_STORE.register_client(redirects)
     return JSONResponse(
         {
-            "client_id": client_id,
-            "client_id_issued_at": int(time.time()),
-            "redirect_uris": data.get("redirect_uris", []),
-            "grant_types": ["authorization_code"],
+            **registration,
+            "redirect_uris": redirects,
+            "grant_types": grants,
             "response_types": ["code"],
             "token_endpoint_auth_method": "none",
-        }
+        },
+        status_code=201,
+        headers={"Cache-Control": "no-store"},
     )
 
 
@@ -185,6 +253,8 @@ CHATGPT_STABLE_REDIRECT = "https://chatgpt.com/connector_platform_oauth_redirect
 
 
 def valid_chatgpt_redirect(value):
+    if not isinstance(value, str):
+        return False
     if value in {CHATGPT_REDIRECT, CHATGPT_STABLE_REDIRECT}:
         return True
     if not value.startswith(CHATGPT_REDIRECT_PREFIX):
@@ -200,29 +270,29 @@ async def chatgpt_authorize(request):
     q = request.query_params
     redirect_uri = q.get("redirect_uri", "")
     if (
-        q.get("client_id") != CHATGPT_CLIENT
-        or not valid_chatgpt_redirect(redirect_uri)
+        not valid_client_redirect(q.get("client_id"), redirect_uri)
         or q.get("response_type") != "code"
         or q.get("code_challenge_method") != "S256"
-        or not q.get("code_challenge")
+        or not re.fullmatch(r"[A-Za-z0-9_-]{43}", q.get("code_challenge", ""))
         or not q.get("state")
     ):
         return JSONResponse({"error": "invalid_client_or_redirect"}, status_code=400)
+    resource = requested_resource(q, request)
+    if resource is None:
+        return JSONResponse({"error": "invalid_target"}, status_code=400)
     state = secrets.token_urlsafe(24)
     oauth_states[state] = {
         "client_id": q["client_id"],
         "redirect_uri": q["redirect_uri"],
         "challenge": q["code_challenge"],
         "chatgpt_state": q.get("state"),
+        "resource": resource,
         "expires": time.time() + 300,
     }
     github = "https://github.com/login/oauth/authorize?" + urlencode(
         {
             "client_id": os.getenv("GITHUB_CLIENT_ID", ""),
-            "redirect_uri": os.getenv(
-                "GATEWAY_PUBLIC_BASE", str(request.base_url).rstrip("/")
-            )
-            + "/oauth/github/callback",
+            "redirect_uri": public_base(request) + "/oauth/github/callback",
             "scope": "read:user",
             "state": state,
         }
@@ -268,6 +338,7 @@ async def github_callback_v2(request):
         "challenge": verifier_challenge,
         "expires": time.time() + 300,
         "github_id": user.get("id"),
+        "resource": item["resource"],
     }
     return RedirectResponse(
         item["redirect_uri"]
@@ -333,11 +404,17 @@ class MCPProxyResponse(StreamingResponse):
 
 
 async def mcp_proxy_fixed(request):
-    if not valid_gateway_auth(request.headers.get("authorization", "")):
+    if not valid_gateway_auth(
+        request.headers.get("authorization", ""), protected_resource(request)
+    ):
         return JSONResponse(
             {"error": "unauthorized"},
             status_code=401,
-            headers={"WWW-Authenticate": "Bearer"},
+            headers={
+                "WWW-Authenticate": 'Bearer resource_metadata="'
+                + public_base(request)
+                + '/.well-known/oauth-protected-resource/mcp", scope="mcp"'
+            },
         )
 
     body = await request.body()

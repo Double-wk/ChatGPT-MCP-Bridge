@@ -601,7 +601,7 @@ dependencies = [
 
 [[package]]
 name = "chatgpt-mcp-bridge-runtime"
-version = "2.0.0"
+version = "3.0.0"
 dependencies = [
  "anyhow",
  "codex-arg0",

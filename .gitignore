@@ -16,8 +16,6 @@ http-token
 
 # Runtime output
 gateway/*.log
-cloudflared/*.log
-cloudflared/logs/
 logs/
 *.pid
 
@@ -29,6 +27,7 @@ __pycache__/
 dist/
 /build/
 .pytest_cache/
+.ruff_cache/
 .coverage
 .idea/
 .vscode/

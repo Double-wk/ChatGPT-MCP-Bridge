@@ -31,7 +31,7 @@ class OAuthRefreshTests(unittest.TestCase):
         self.assertEqual(data["token_endpoint_auth_methods_supported"], ["none"])
 
     def test_authorization_code_refresh_replay_and_persistence(self):
-        verifier = "test-pkce-verifier"
+        verifier = "v" * 43
         code = "test-once-only-authorization-code"
         client_id = gateway.CHATGPT_CLIENT
         redirect = "https://chatgpt.com/connector/oauth/test"
@@ -39,11 +39,13 @@ class OAuthRefreshTests(unittest.TestCase):
             "client_id": client_id,
             "redirect_uri": redirect,
             "challenge": gateway.challenge(verifier),
+            "resource": "http://testserver/mcp",
             "expires": 99999999999,
         }
         with TestClient(gateway.app) as browser:
             data = {
                 "grant_type": "authorization_code",
+                "resource": "http://testserver/mcp",
                 "code": code,
                 "code_verifier": verifier,
                 "redirect_uri": redirect,
@@ -109,17 +111,19 @@ class OAuthRefreshTests(unittest.TestCase):
         self.assertTrue(digest(second["access_token"]).encode() in raw)
 
     def test_client_redirect_and_pkce_checks_do_not_consume_code(self):
-        verifier = "pkce-test"
+        verifier = "p" * 43
         code = "token-validation-code"
         gateway.codes[code] = {
             "client_id": gateway.CHATGPT_CLIENT,
             "redirect_uri": gateway.CHATGPT_STABLE_REDIRECT,
             "challenge": gateway.challenge(verifier),
+            "resource": "http://testserver/mcp",
             "expires": 99999999999,
         }
         with TestClient(gateway.app) as browser:
             base = {
                 "grant_type": "authorization_code",
+                "resource": "http://testserver/mcp",
                 "code": code,
                 "client_id": gateway.CHATGPT_CLIENT,
                 "redirect_uri": gateway.CHATGPT_STABLE_REDIRECT,

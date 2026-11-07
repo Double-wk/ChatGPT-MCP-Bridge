@@ -1,6 +1,7 @@
 """Direct project execution and file tools."""
 
 import json
+import re
 import shutil
 import sys
 
@@ -24,6 +25,7 @@ async def get_environment() -> str:
             "backend": "embedded-codex-executor",
             "workspace": str(backend.workspace),
             "network_access": backend.network,
+            "full_access": backend.full_access,
         }
     )
 
@@ -42,6 +44,8 @@ async def execute(
     (1..3600). Output is capped at 64 KiB per stream. Use exec_command for
     interactive commands or long work that needs polling. read_only selects
     Codex's read-only sandbox; otherwise writes are confined to the workspace.
+    If full_access is enabled, neither restriction is enforced and commands can
+    access all files and network resources available to the server account.
     """
     if not command.strip() or len(command.encode()) > 65536:
         raise ValueError("command must contain 1..65536 UTF-8 bytes")
@@ -68,6 +72,7 @@ async def exec_command(
     Returns session_id when still running. Poll or send input with write_stdin;
     stop with terminate_process. yield_time_ms is 0..10000, timeout is seconds.
     Shell syntax requires an explicit argv such as ["bash", "-c", "..."]
+    With full_access enabled, read_only does not enforce filesystem restrictions.
     """
     if not 0 <= yield_time_ms <= 10000:
         raise ValueError("yield_time_ms must be between 0 and 10000")
@@ -75,6 +80,58 @@ async def exec_command(
         raise ValueError("command exceeds 64 KiB")
     backend = _get_backend()
     session_id = await backend.launch(command, working_dir, timeout, tty, read_only)
+    return _json(await backend.poll(session_id, yield_time_ms))
+
+
+@mcp.tool()
+@_mcp_tool
+async def remote_ssh(
+    host: str,
+    port: int | None = None,
+    authentication: str = "key",
+    yield_time_ms: int = 1000,
+) -> str:
+    """Open a persistent SSH shell using an existing SSH host or user@host.
+
+    host is an SSH alias or user@hostname; port is optional and defaults to SSH
+    configuration or port 22. authentication is 'key' or 'password'. Configure
+    known_hosts on the Bridge machine first. Key mode uses batch authentication;
+    password mode prompts on the terminal and accepts input via write_stdin.
+    Passwords passed to tools may be recorded in conversation or tool history.
+    Host-key verification remains strict. Poll and send commands with write_stdin,
+    and disconnect with terminate_process using the returned session_id. The
+    session lasts until disconnected, the connection drops, or Bridge restarts.
+    Network access must be enabled. Remote commands run with the remote account's
+    permissions; the local sandbox does not restrict their effects.
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.@:-]{0,254}", host):
+        raise ValueError("host must be an SSH alias or user@hostname")
+    if port is not None and not 1 <= port <= 65535:
+        raise ValueError("port must be between 1 and 65535")
+    if authentication not in ("key", "password"):
+        raise ValueError("authentication must be 'key' or 'password'")
+    if not 0 <= yield_time_ms <= 10000:
+        raise ValueError("yield_time_ms must be between 0 and 10000")
+    backend = _get_backend()
+    if not backend.network:
+        raise ValueError("SSH requires MCP_BRIDGE_NETWORK_ACCESS=true or full access")
+    ssh = shutil.which("ssh")
+    if not ssh:
+        raise RuntimeError("ssh executable is not installed")
+    argv = [ssh, "-tt", "-o", "StrictHostKeyChecking=yes"]
+    if authentication == "key":
+        argv.extend(["-o", "BatchMode=yes"])
+    else:
+        argv.extend(["-o", "BatchMode=no", "-o", "PreferredAuthentications=password,keyboard-interactive", "-o", "PubkeyAuthentication=no"])
+    if port is not None:
+        argv.extend(["-p", str(port)])
+    argv.append(host)
+    session_id = await backend.launch(
+        argv,
+        None,
+        None,
+        tty=True,
+    )
     return _json(await backend.poll(session_id, yield_time_ms))
 
 
@@ -111,6 +168,8 @@ async def terminate_process(session_id: str) -> str:
 @_mcp_tool
 async def read_file(path: str, start_line: int = 1, max_lines: int = 200) -> str:
     """Read a UTF-8 file inside the workspace through the Codex read-only sandbox.
+
+    When full_access is enabled, the operating system sandbox is disabled.
 
     Output includes line numbers, with at most 2000 lines and 48 KiB of text.
     """
@@ -163,7 +222,7 @@ async def write_file(path: str, content: str, overwrite: bool = False) -> str:
     """Write a UTF-8 file through Codex (64 KiB maximum). Parent must exist.
 
     Existing files require overwrite=True. Paths are relative to the workspace
-    or absolute within it. Codex's sandbox enforces the write boundary.
+    or absolute within it. Full-access mode disables the OS sandbox boundary.
     """
     import base64
 

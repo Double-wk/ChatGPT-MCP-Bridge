@@ -49,10 +49,11 @@ class AgentService:
                 return
             self.loaded.clear()
             self.home.mkdir(parents=True, exist_ok=True, mode=0o700)
+            sandbox = "danger-full-access" if os.getenv("MCP_BRIDGE_FULL_ACCESS", "false").lower() == "true" else "workspace-write"
             config = f"""model = "gpt-web"
 model_provider = "web_bridge"
 approval_policy = "never"
-sandbox_mode = "workspace-write"
+sandbox_mode = "{sandbox}"
 model_context_window = 128000
 model_auto_compact_token_limit = 64000
 model_catalog_json = {json.dumps(str(Path(__file__).resolve().parents[1] / "assets/models.json"))}
@@ -114,7 +115,7 @@ http_headers = {{ Authorization = {json.dumps("Bearer " + self.relay.token)} }}
                 "modelProvider": "web_bridge",
                 "cwd": cwd,
                 "approvalPolicy": "never",
-                "sandbox": "workspace-write",
+                "sandbox": "danger-full-access" if os.getenv("MCP_BRIDGE_FULL_ACCESS", "false").lower() == "true" else "workspace-write",
             },
         )
         thread_id = result["thread"]["id"]

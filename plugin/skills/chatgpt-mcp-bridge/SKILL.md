@@ -50,6 +50,12 @@ Use `list_agent_tasks` to recover a saved thread, then `/resume`. Respect explic
 pause/cancel requests. Inspect pending user requests and ask the user when needed;
 return their answer with `answer_agent_request`. Do not invent approval or answers.
 
+For a user-requested persistent remote shell, call `remote_ssh` with an already
+configured SSH host and retain its `session_id`. Use `write_stdin` for commands
+and output, and `terminate_process` when the user asks to disconnect. Never ask
+the user to paste passwords or private keys into the conversation. A connection
+can end on network failure or server restart; reconnect explicitly if needed.
+
 The native task history and bridge records persist on the server. This does not
 replace the webpage's own conversation context or wake a closed/finished host turn.
 Model usage reported by the bridge is an estimate for native accounting and

@@ -2,8 +2,9 @@
 
 ## Version policy
 
-The v2 release line begins at the commit tagged v2.0.0 on branch main.
-Until the user explicitly starts v3, implement and commit subsequent changes on main. Do not create version branches.
-Keep the v2.0.0 baseline tag and its commit timestamp fixed; later v2 commits do not reset the release-line start time.
-Do not amend the baseline or move its tag to incorporate later work.
-See docs/versioning.md for the baseline time.
+The user explicitly started v3 on 2026-11-07. Implement and commit subsequent changes on main. Do not create version branches.
+The v3 release consolidates the post-v2 functional changes into one release commit, tagged v3.0.0.
+Per the user, fold subsequent v3 fixes into that same release commit rather than publishing separate fix commits. Keep both its author and committer timestamps at 2026-11-07T20:45:54+08:00; update v3.0.0 to the consolidated commit while preserving its original tagger timestamp.
+Keep the existing v1.0.0 and v2.0.0 tags and their commit timestamps fixed.
+Do not amend the v2 baseline or move its tag to incorporate later work.
+See docs/versioning.md for the baseline time and current release policy.
